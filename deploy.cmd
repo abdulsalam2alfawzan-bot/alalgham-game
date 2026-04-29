@@ -29,7 +29,7 @@ set /p SAVE_GIT=Save these changes to GitHub now? (y/N):
 if /i "%SAVE_GIT%"=="Y" (
   echo Saving to GitHub...
   git status --short
-  git add -- next.config.ts firebase.json deploy.cmd public src package.json package-lock.json
+  git add -- .gitignore README.md .env.example firebase.json firestore.rules deploy.cmd public src package.json package-lock.json
   if exist ".firebaserc" git add -- .firebaserc
   git diff --cached --quiet
   if errorlevel 1 (

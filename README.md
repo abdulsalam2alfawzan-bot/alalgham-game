@@ -1,36 +1,107 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# الألغام
 
-## Getting Started
+لعبة عربية سريعة للفرق تعمل بواجهة RTL، وتركز على إنشاء غرفة، دعوة اللاعبين، تجهيز اللوحات، ثم إدارة اللعب والنقاط.
 
-First, run the development server:
+## البنية
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- Next.js App Router + TypeScript.
+- Firebase Hosting classic عبر static export إلى مجلد `out`.
+- Firebase client SDK فقط.
+- Firebase Anonymous Auth يعمل بصمت في الخلفية عند توفر إعدادات Firebase.
+- Cloud Firestore عند توفر الإعدادات.
+- fallback محلي عبر `localStorage` إذا لم تكن Firebase مهيأة.
+
+## خدمات Firebase المطلوبة
+
+فعّل هذه الخدمات في مشروع Firebase:
+
+1. Authentication → Anonymous.
+2. Firestore Database.
+3. Firebase Hosting classic.
+
+مهم: لا تستخدم Firebase App Hosting لهذا الـ MVP.
+
+## متغيرات البيئة
+
+انسخ `.env.example` إلى `.env.local` ثم املأ القيم من Firebase Console:
+
+```env
+NEXT_PUBLIC_FIREBASE_API_KEY=
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
+NEXT_PUBLIC_FIREBASE_APP_ID=
+NEXT_PUBLIC_APP_URL=
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+لا تضع أسرارًا خاصة في هذه القيم. كلها مفاتيح public مخصصة لاستخدام Firebase client SDK.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## أوامر التطوير
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```powershell
+cd C:\Projects\alalgham-game
+npm.cmd run dev
+```
 
-## Learn More
+افتح:
 
-To learn more about Next.js, take a look at the following resources:
+```text
+http://localhost:3000
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## البناء
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```powershell
+cd C:\Projects\alalgham-game
+npm.cmd run build
+```
 
-## Deploy on Vercel
+ينتج البناء مجلد:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```text
+out
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## النشر على Firebase Hosting classic
+
+```powershell
+cd C:\Projects\alalgham-game
+npm.cmd run build
+firebase.cmd deploy --only hosting
+```
+
+يمكن أيضًا تشغيل:
+
+```powershell
+.\deploy.cmd
+```
+
+## حفظ التغييرات في GitHub
+
+```powershell
+cd C:\Projects\alalgham-game
+git add .
+git commit -m "Implement Firebase MVP for Alalgham"
+git push
+```
+
+## أكواد التفعيل التجريبية
+
+```text
+JWK-4821
+JWK-2026
+DEMO-1234
+```
+
+## قيود مهمة
+
+- لا API routes.
+- لا Server Actions.
+- لا Middleware.
+- لا SSR.
+- لا backend server code.
+- لا تسجيل دخول مرئي.
+- لا دفع الآن.
+- إنشاء غرفة يمر عبر كود تفعيل أو خيار QR تفعيل.
+- رمز الغرفة وQR الدعوة مخصصان للاعبين فقط.

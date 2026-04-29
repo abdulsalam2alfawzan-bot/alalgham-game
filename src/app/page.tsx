@@ -19,7 +19,7 @@ export default function Home() {
       </section>
 
       <p className="rounded-2xl bg-amber-50 px-4 py-3 text-sm font-bold leading-6 text-amber-900 ring-1 ring-amber-100">
-        نسخة تجريبية — البيانات محلية للتجربة فقط.
+        نسخة تجريبية — البيانات محلية أو سحابية حسب الإعداد.
       </p>
     </PageShell>
   );

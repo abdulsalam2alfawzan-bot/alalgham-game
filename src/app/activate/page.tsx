@@ -1,32 +1,46 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { PageShell, Panel } from "../_components/game-ui";
+import { ActionLink, PageShell, Panel } from "../_components/game-ui";
 import {
-  activationErrorMessage,
-  isActivationCodeValid,
+  activateCode,
   normalizeActivationCode,
-  saveActivation,
-} from "../_lib/room-session";
+} from "@/lib/game/activationService";
 
 export default function ActivatePage() {
   const router = useRouter();
   const [activationCode, setActivationCode] = useState("");
   const [message, setMessage] = useState("");
+  const [isSuccess, setIsSuccess] = useState(false);
   const [qrMessage, setQrMessage] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  function handleActivate(event: FormEvent<HTMLFormElement>) {
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams(window.location.search);
+      const codeFromQr = params.get("code");
+      if (codeFromQr) {
+        setActivationCode(normalizeActivationCode(codeFromQr));
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  async function handleActivate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setIsSubmitting(true);
 
     const normalizedCode = normalizeActivationCode(activationCode);
-    if (!isActivationCodeValid(normalizedCode)) {
-      setMessage(activationErrorMessage);
-      return;
-    }
+    const result = await activateCode(normalizedCode);
+    setMessage(result.message);
+    setIsSuccess(result.ok);
+    setIsSubmitting(false);
 
-    saveActivation(normalizedCode);
-    router.push("/create-room");
+    if (result.ok) {
+      window.setTimeout(() => router.push("/create-room?activated=1"), 500);
+    }
   }
 
   return (
@@ -49,17 +63,30 @@ export default function ActivatePage() {
           </label>
 
           {message ? (
-            <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm font-bold leading-6 text-rose-800 ring-1 ring-rose-100">
+            <p
+              className={`rounded-2xl px-4 py-3 text-sm font-bold leading-6 ring-1 ${
+                isSuccess
+                  ? "bg-teal-50 text-teal-900 ring-teal-100"
+                  : "bg-rose-50 text-rose-800 ring-rose-100"
+              }`}
+            >
               {message}
             </p>
           ) : null}
 
           <button
             type="submit"
+            disabled={isSubmitting}
             className="min-h-14 rounded-2xl bg-teal-600 px-5 py-4 text-lg font-black text-white shadow-sm transition hover:bg-teal-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700"
           >
-            تفعيل وإنشاء غرفة
+            {isSubmitting ? "جاري التفعيل..." : "تفعيل الغرفة"}
           </button>
+
+          {isSuccess ? (
+            <ActionLink href="/create-room?activated=1" variant="light">
+              متابعة إنشاء الغرفة
+            </ActionLink>
+          ) : null}
         </form>
       </Panel>
 

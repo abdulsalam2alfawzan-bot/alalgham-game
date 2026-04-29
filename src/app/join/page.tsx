@@ -1,30 +1,52 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { ActionLink, PageShell, Panel, RoomBadge } from "../_components/game-ui";
-import { room, teams } from "../_data/game";
-import { readRoomInvitation } from "../_lib/room-session";
+import { FormEvent, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { PageShell, Panel, RoomBadge } from "../_components/game-ui";
+import { joinRoom } from "@/lib/game/playerService";
 
 export default function JoinPage() {
-  const [roomCode, setRoomCode] = useState(room.code);
+  const router = useRouter();
+  const [roomCode, setRoomCode] = useState("");
+  const [playerName, setPlayerName] = useState("");
+  const [message, setMessage] = useState("");
+  const [qrMessage, setQrMessage] = useState("");
+  const [isJoining, setIsJoining] = useState(false);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const codeFromUrl = params.get("room");
-    const invitation = readRoomInvitation(room.code);
-    setRoomCode(codeFromUrl ?? invitation.roomCode);
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams(window.location.search);
+      setRoomCode(params.get("room") ?? "4821");
+    }, 0);
+
+    return () => window.clearTimeout(timer);
   }, []);
+
+  async function handleJoin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsJoining(true);
+    const result = await joinRoom(roomCode, playerName);
+    setIsJoining(false);
+
+    if (!result.ok) {
+      setMessage(result.message);
+      return;
+    }
+
+    setMessage("تم دخول الغرفة");
+    router.push(`/waiting-room?room=${result.room.roomCode}`);
+  }
 
   return (
     <PageShell
       eyebrow="لاعب"
       title="دخول لاعب"
-      description="اكتب الرمز والاسم، ثم انضم للفريق."
+      description="اكتب رمز الغرفة واسمك، ثم انضم للعبة."
     >
-      <RoomBadge code={roomCode} />
+      <RoomBadge code={roomCode || "----"} />
 
       <Panel title="بيانات اللاعب">
-        <form className="grid gap-4">
+        <form className="grid gap-4" onSubmit={handleJoin}>
           <label className="grid gap-2">
             <span className="font-bold text-slate-700">رمز الغرفة</span>
             <input
@@ -39,28 +61,45 @@ export default function JoinPage() {
             <input
               className="min-h-14 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-bold outline-none focus:border-teal-500"
               placeholder="مثال: أحمد"
+              value={playerName}
+              onChange={(event) => setPlayerName(event.target.value)}
             />
           </label>
 
-          <label className="grid gap-2">
-            <span className="font-bold text-slate-700">الفريق</span>
-            <select className="min-h-14 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-bold outline-none focus:border-teal-500">
-              {teams.map((team) => (
-                <option key={team.id}>{team.name}</option>
-              ))}
-            </select>
-          </label>
+          {message ? (
+            <p className="rounded-2xl bg-amber-50 px-4 py-3 text-sm font-bold leading-6 text-amber-900 ring-1 ring-amber-100">
+              {message}
+            </p>
+          ) : null}
+
+          <button
+            type="submit"
+            disabled={isJoining}
+            className="min-h-14 rounded-2xl bg-teal-600 px-5 py-4 text-lg font-black text-white shadow-sm disabled:opacity-60"
+          >
+            {isJoining ? "جاري الدخول..." : "دخول الغرفة"}
+          </button>
         </form>
       </Panel>
 
-      <section className="grid gap-3 sm:grid-cols-2">
-        <ActionLink href="/waiting-room" variant="secondary">
-          دخول الغرفة
-        </ActionLink>
-        <ActionLink href="/teams" variant="light">
-          عرض الفرق
-        </ActionLink>
-      </section>
+      <Panel title="الدخول عبر QR" tone="soft">
+        <div className="grid gap-3">
+          <button
+            type="button"
+            onClick={() =>
+              setQrMessage("يمكنك مسح رمز QR بكاميرا الجوال أو إدخال رمز الغرفة يدويًا.")
+            }
+            className="min-h-14 rounded-2xl border border-teal-200 bg-white px-5 py-4 text-lg font-black text-teal-800"
+          >
+            مسح QR
+          </button>
+          {qrMessage ? (
+            <p className="rounded-2xl bg-white px-4 py-3 text-sm font-bold leading-6 text-slate-700 ring-1 ring-teal-100">
+              {qrMessage}
+            </p>
+          ) : null}
+        </div>
+      </Panel>
     </PageShell>
   );
 }
