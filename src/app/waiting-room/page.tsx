@@ -42,8 +42,14 @@ export default function WaitingRoomPage() {
     const timer = window.setTimeout(() => {
       void loadWaitingRoom();
     }, 0);
+    const interval = window.setInterval(() => {
+      void loadWaitingRoom();
+    }, 2500);
 
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      window.clearInterval(interval);
+    };
   }, []);
 
   const session = readRoomSession();
@@ -105,7 +111,7 @@ export default function WaitingRoomPage() {
           { label: "الغرفة", value: room?.name ?? "..." },
           { label: "الحالة", value: room?.status ?? "..." },
           { label: "اللاعب", value: currentPlayer?.name ?? "..." },
-          { label: "الفريق", value: currentTeam?.name ?? "لم يتم التوزيع" },
+          { label: "الفريق المختار", value: currentTeam?.name ?? "لم يتم اختيار فريق بعد" },
         ]}
       />
 
@@ -118,7 +124,7 @@ export default function WaitingRoomPage() {
           <div className="grid gap-2">
             <p className="text-sm font-bold text-slate-500">حالة التوزيع</p>
             <p className="font-bold text-slate-700">
-              {currentTeam ? `تم تعيينك في ${currentTeam.name}` : "لم يتم تعيينك في فريق بعد"}
+              {currentTeam ? `الفريق المختار: ${currentTeam.name}` : "لم يتم اختيار فريق بعد"}
             </p>
           </div>
           {currentTeam ? (
@@ -130,7 +136,7 @@ export default function WaitingRoomPage() {
             </div>
           ) : null}
           <p className="rounded-2xl bg-slate-50 px-4 py-3 text-sm font-bold leading-6 text-slate-600">
-            بانتظار المشرف لتوزيع الفرق وبدء اللعبة
+            بانتظار المشرف لتعيين الكابتن وبدء اللعبة
           </p>
         </div>
       </Panel>

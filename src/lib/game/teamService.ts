@@ -4,36 +4,68 @@ import { collection, deleteField, doc, getDocs, onSnapshot, setDoc, updateDoc, w
 import type { Player, Team } from "@/types/game";
 import { getFirebaseDb } from "@/lib/firebase/firestore";
 import { sanitizeTeamName } from "@/lib/security/inputSafety";
+import {
+  activeTeamDefinitions,
+  getDefaultTeamName,
+  isActiveTeamId,
+  startingScore,
+} from "./constants";
 import { addGameEvent } from "./eventService";
 import { readLocalState, updateLocalState } from "./localStore";
+
+function normalizeRoomTeams(roomId: string, teams: Team[]) {
+  return activeTeamDefinitions.map((teamDefinition, index) => {
+    const source = teams.find((team) => team.roomId === roomId && team.id === teamDefinition.id);
+    const safeName = sanitizeTeamName(source?.name ?? "");
+
+    return {
+      id: teamDefinition.id,
+      roomId,
+      name: safeName || getDefaultTeamName(teamDefinition.id, index),
+      color: teamDefinition.color,
+      score: source?.score ?? startingScore,
+      order: index,
+      captainId: source?.captainId,
+      captainPlayerId: source?.captainPlayerId,
+      doubleAvailable: source?.doubleAvailable ?? true,
+      boardLocked: source?.boardLocked ?? false,
+    };
+  });
+}
 
 export async function getTeams(roomId: string) {
   const db = getFirebaseDb();
   if (db) {
     try {
       const snapshot = await getDocs(collection(db, "rooms", roomId, "teams"));
-      return snapshot.docs
-        .map((doc) => ({ ...(doc.data() as Team), id: doc.id }))
-        .sort((left, right) => left.order - right.order);
+      return normalizeRoomTeams(
+        roomId,
+        snapshot.docs.map((doc) => ({ ...(doc.data() as Team), id: doc.id })),
+      );
     } catch (error) {
       console.warn("Firebase teams read failed; using local fallback.", error);
     }
   }
 
-  return readLocalState()
-    .teams.filter((team) => team.roomId === roomId)
-    .sort((left, right) => left.order - right.order);
+  return normalizeRoomTeams(roomId, readLocalState().teams.filter((team) => team.roomId === roomId));
 }
 
 export async function saveTeam(team: Team) {
+  if (!isActiveTeamId(team.id)) {
+    return team;
+  }
+
   const db = getFirebaseDb();
-  const updatedTeam = { ...team, name: sanitizeTeamName(team.name) || team.name };
+  const updatedTeam = {
+    ...team,
+    name: sanitizeTeamName(team.name) || getDefaultTeamName(team.id, team.order),
+  };
   if (db) {
     try {
       await setDoc(doc(db, "rooms", team.roomId, "teams", team.id), updatedTeam, {
         merge: true,
       });
-      await addGameEvent(team.roomId, "team_updated", `تم تحديث فريق ${team.name}`);
+      await addGameEvent(team.roomId, "team_updated", `تم تحديث فريق ${updatedTeam.name}`);
       return updatedTeam;
     } catch (error) {
       console.warn("Firebase team save failed; using local fallback.", error);
@@ -42,12 +74,18 @@ export async function saveTeam(team: Team) {
 
   updateLocalState((state) => ({
     ...state,
-    teams: state.teams.map((item) => (item.id === team.id ? updatedTeam : item)),
+    teams: state.teams.some((item) => item.roomId === team.roomId && item.id === team.id)
+      ? state.teams.map((item) => (item.roomId === team.roomId && item.id === team.id ? updatedTeam : item))
+      : [...state.teams, updatedTeam],
   }));
   return updatedTeam;
 }
 
 export async function removeCaptain(roomId: string, teamId: string) {
+  if (!isActiveTeamId(teamId)) {
+    return;
+  }
+
   const teams = await getTeams(roomId);
   const team = teams.find((item) => item.id === teamId);
   const captainId = team?.captainId ?? team?.captainPlayerId;
@@ -90,6 +128,10 @@ export async function removeCaptain(roomId: string, teamId: string) {
 }
 
 export async function setCaptain(roomId: string, teamId: string, playerId: string) {
+  if (!isActiveTeamId(teamId)) {
+    return;
+  }
+
   const db = getFirebaseDb();
   if (db) {
     try {
@@ -151,6 +193,10 @@ export async function setCaptain(roomId: string, teamId: string, playerId: strin
 }
 
 export async function adjustTeamScore(roomId: string, teamId: string, amount: number) {
+  if (!isActiveTeamId(teamId)) {
+    return;
+  }
+
   const teams = await getTeams(roomId);
   const team = teams.find((item) => item.id === teamId);
   if (!team) {
@@ -172,7 +218,7 @@ export async function adjustTeamScore(roomId: string, teamId: string, amount: nu
   updateLocalState((state) => ({
     ...state,
     teams: state.teams.map((item) =>
-      item.id === teamId ? { ...item, score: nextScore } : item,
+      item.roomId === roomId && item.id === teamId ? { ...item, score: nextScore } : item,
     ),
   }));
 }
@@ -183,11 +229,7 @@ export function watchTeams(roomId: string, callback: (teams: Team[]) => void) {
     return onSnapshot(
       collection(db, "rooms", roomId, "teams"),
       (snapshot) => {
-        callback(
-          snapshot.docs
-            .map((doc) => ({ ...(doc.data() as Team), id: doc.id }))
-            .sort((left, right) => left.order - right.order),
-        );
+        callback(normalizeRoomTeams(roomId, snapshot.docs.map((doc) => ({ ...(doc.data() as Team), id: doc.id }))));
       },
       () => {
         void getTeams(roomId).then(callback);

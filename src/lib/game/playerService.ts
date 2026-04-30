@@ -14,8 +14,10 @@ import {
   sanitizeCode,
   sanitizeName,
 } from "@/lib/security/inputSafety";
+import { isActiveTeamId } from "./constants";
 import { addGameEvent } from "./eventService";
 import { createLocalId, readLocalState, rememberPlayerSession, updateLocalState } from "./localStore";
+import { getTeams } from "./teamService";
 
 type StoredPlayer = Omit<Player, "role"> & Partial<Pick<Player, "role">>;
 
@@ -37,7 +39,7 @@ export async function getPlayers(roomId: string) {
   return readLocalState().players.filter((player) => player.roomId === roomId).map(normalizePlayer);
 }
 
-export async function joinRoom(playerCode: string, playerName: string) {
+export async function joinRoom(playerCode: string, playerName: string, teamId: string) {
   const normalizedPlayerCode = sanitizeCode(playerCode);
   if (!isValidPlayerCode(normalizedPlayerCode)) {
     return { ok: false as const, message: "كود اللاعبين غير صحيح أو منتهي" };
@@ -57,6 +59,16 @@ export async function joinRoom(playerCode: string, playerName: string) {
     return { ok: false as const, message: "يرجى إدخال قيمة صحيحة" };
   }
 
+  if (!isActiveTeamId(teamId)) {
+    return { ok: false as const, message: "يرجى اختيار فريق صحيح" };
+  }
+
+  const teams = await getTeams(room.id);
+  const selectedTeam = teams.find((team) => team.id === teamId);
+  if (!selectedTeam) {
+    return { ok: false as const, message: "يرجى اختيار فريق صحيح" };
+  }
+
   const user = await signInAnonymouslyIfNeeded();
   const db = getFirebaseDb();
   const now = Date.now();
@@ -65,6 +77,7 @@ export async function joinRoom(playerCode: string, playerName: string) {
     roomId: room.id,
     name: safePlayerName,
     uid: user?.uid ?? createLocalId("local-user"),
+    teamId: selectedTeam.id,
     role: "player",
     isCaptain: false,
     joinedAt: now,
@@ -74,7 +87,7 @@ export async function joinRoom(playerCode: string, playerName: string) {
   if (db) {
     try {
       await setDoc(doc(db, "rooms", room.id, "players", player.id), player);
-      await addGameEvent(room.id, "player_joined", `انضم ${player.name}`);
+      await addGameEvent(room.id, "player_joined", `انضم ${player.name} إلى ${selectedTeam.name}`);
       rememberPlayerSession(player.id);
       savePlayerSession({
         roomId: room.id,
@@ -101,7 +114,7 @@ export async function joinRoom(playerCode: string, playerName: string) {
         id: createLocalId("event"),
         roomId: room.id,
         type: "player_joined",
-        message: `انضم ${player.name}`,
+        message: `انضم ${player.name} إلى ${selectedTeam.name}`,
         createdAt: now,
       },
       ...state.events,
@@ -119,6 +132,10 @@ export async function joinRoom(playerCode: string, playerName: string) {
 }
 
 export async function assignPlayerToTeam(roomId: string, playerId: string, teamId: string) {
+  if (!isActiveTeamId(teamId)) {
+    return;
+  }
+
   const db = getFirebaseDb();
   if (db) {
     try {
@@ -166,7 +183,7 @@ export async function assignPlayerToTeam(roomId: string, playerId: string, teamI
           : team,
       ),
       players: state.players.map((player) =>
-        player.id === playerId
+        player.roomId === roomId && player.id === playerId
           ? {
               ...player,
               teamId,

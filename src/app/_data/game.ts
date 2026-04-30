@@ -1,4 +1,4 @@
-export type TeamId = "falcons" | "palms" | "stars" | "waves";
+export type TeamId = "blue-team" | "red-team";
 
 export type Team = {
   id: TeamId;
@@ -24,41 +24,25 @@ export const room = {
   playerCode: "P-4821-27",
   ownerCode: "M-4821-93",
   status: "جاهزة",
-  teamsCount: 4,
+  teamsCount: 2,
 };
 
 export const teams: Team[] = [
   {
-    id: "falcons",
-    name: "الصقور",
-    captain: "نورة",
+    id: "blue-team",
+    name: "الفريق الأزرق",
+    captain: "لم يحدد",
     score: 1000,
-    players: ["نورة", "سالم", "هند"],
-    color: "bg-teal-600",
+    players: [],
+    color: "bg-blue-600",
   },
   {
-    id: "palms",
-    name: "النخيل",
-    captain: "مازن",
+    id: "red-team",
+    name: "الفريق الأحمر",
+    captain: "لم يحدد",
     score: 1000,
-    players: ["مازن", "ريم", "علي"],
-    color: "bg-amber-500",
-  },
-  {
-    id: "stars",
-    name: "النجوم",
-    captain: "ليان",
-    score: 1000,
-    players: ["ليان", "فهد"],
-    color: "bg-indigo-600",
-  },
-  {
-    id: "waves",
-    name: "الموج",
-    captain: "عبدالله",
-    score: 1000,
-    players: ["عبدالله", "سارة"],
-    color: "bg-rose-600",
+    players: [],
+    color: "bg-red-600",
   },
 ];
 
@@ -77,7 +61,7 @@ const boardTemplate: Array<Omit<BoardSquare, "id" | "ownerTeamId">> = [
   { kind: "points", value: 500, label: "500" },
 ];
 
-export function buildBoard(ownerTeamId: TeamId = "palms"): BoardSquare[] {
+export function buildBoard(ownerTeamId: TeamId = "red-team"): BoardSquare[] {
   return boardTemplate.map((square, index) => ({
     ...square,
     id: index + 1,

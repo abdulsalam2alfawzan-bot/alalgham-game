@@ -4,7 +4,11 @@ import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PageShell, Panel, RoomBadge } from "../_components/game-ui";
 import { QrScannerModal } from "@/components/qr/QrScannerModal";
+import type { Team } from "@/types/game";
+import { validatePlayerCode } from "@/lib/auth/roomAccess";
+import { activeTeamDefinitions, futureTeamDefinitions, isActiveTeamId } from "@/lib/game/constants";
 import { joinRoom } from "@/lib/game/playerService";
+import { getTeams } from "@/lib/game/teamService";
 import {
   inputErrorMessages,
   isSafeText,
@@ -18,6 +22,8 @@ export default function JoinPage() {
   const router = useRouter();
   const [playerCode, setPlayerCode] = useState("");
   const [playerName, setPlayerName] = useState("");
+  const [availableTeams, setAvailableTeams] = useState<Team[]>([]);
+  const [selectedTeamId, setSelectedTeamId] = useState("");
   const [message, setMessage] = useState("");
   const [qrMessage, setQrMessage] = useState("");
   const [scannerOpen, setScannerOpen] = useState(false);
@@ -38,6 +44,38 @@ export default function JoinPage() {
     return () => window.clearTimeout(timer);
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadTeamsForCode() {
+      const safeCode = sanitizeCode(playerCode);
+      if (!isValidPlayerCode(safeCode)) {
+        setAvailableTeams([]);
+        setSelectedTeamId("");
+        return;
+      }
+
+      const room = await validatePlayerCode(safeCode);
+      if (!room) {
+        if (!cancelled) {
+          setAvailableTeams([]);
+          setSelectedTeamId("");
+        }
+        return;
+      }
+
+      const teams = await getTeams(room.id);
+      if (!cancelled) {
+        setAvailableTeams(teams.filter((team) => isActiveTeamId(team.id)));
+      }
+    }
+
+    void loadTeamsForCode();
+    return () => {
+      cancelled = true;
+    };
+  }, [playerCode]);
+
   async function handleJoin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const safeCode = sanitizeCode(playerCode);
@@ -53,8 +91,13 @@ export default function JoinPage() {
       return;
     }
 
+    if (!isActiveTeamId(selectedTeamId)) {
+      setMessage("يرجى اختيار فريق صحيح");
+      return;
+    }
+
     setIsJoining(true);
-    const result = await joinRoom(safeCode, safeName);
+    const result = await joinRoom(safeCode, safeName, selectedTeamId);
     setIsJoining(false);
 
     if (!result.ok) {
@@ -79,6 +122,7 @@ export default function JoinPage() {
     }
 
     setPlayerCode(parsed.playerCode);
+    setSelectedTeamId("");
     setMessage("");
     setQrMessage("تم قراءة كود اللاعبين، اضغط دخول الغرفة للمتابعة.");
   }
@@ -114,6 +158,52 @@ export default function JoinPage() {
               onChange={(event) => setPlayerName(sanitizeName(event.target.value))}
             />
           </label>
+
+          <fieldset className="grid gap-3">
+            <legend className="font-bold text-slate-700">اختر فريقك</legend>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {activeTeamDefinitions.map((teamDefinition) => {
+                const team = availableTeams.find((item) => item.id === teamDefinition.id);
+                const teamName = team?.name ?? teamDefinition.defaultName;
+                const selected = selectedTeamId === teamDefinition.id;
+                const isBlue = teamDefinition.id === "blue-team";
+
+                return (
+                  <button
+                    key={teamDefinition.id}
+                    type="button"
+                    onClick={() => setSelectedTeamId(teamDefinition.id)}
+                    className={`min-h-24 rounded-3xl border-2 p-4 text-right shadow-sm transition ${
+                      selected
+                        ? isBlue
+                          ? "border-blue-600 bg-blue-50 text-blue-950 ring-4 ring-blue-100"
+                          : "border-red-600 bg-red-50 text-red-950 ring-4 ring-red-100"
+                        : "border-slate-200 bg-white text-slate-800"
+                    }`}
+                  >
+                    <span className={`mb-3 block h-3 w-16 rounded-full ${isBlue ? "bg-blue-600" : "bg-red-600"}`} />
+                    <span className="block text-xl font-black">{teamName}</span>
+                    <span className="mt-1 block text-sm font-bold opacity-70">
+                      {selected ? "تم الاختيار" : "اضغط للاختيار"}
+                    </span>
+                  </button>
+                );
+              })}
+
+              {futureTeamDefinitions.map((team) => (
+                <button
+                  key={team.id}
+                  type="button"
+                  disabled
+                  className="min-h-24 cursor-not-allowed rounded-3xl border-2 border-slate-200 bg-slate-100 p-4 text-right text-slate-400"
+                >
+                  <span className="mb-3 block h-3 w-16 rounded-full bg-slate-300" />
+                  <span className="block text-xl font-black">{team.name}</span>
+                  <span className="mt-1 block text-sm font-bold">غير متاح الآن</span>
+                </button>
+              ))}
+            </div>
+          </fieldset>
 
           {message ? (
             <p className="rounded-2xl bg-amber-50 px-4 py-3 text-sm font-bold leading-6 text-amber-900 ring-1 ring-amber-100">

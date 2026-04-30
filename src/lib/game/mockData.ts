@@ -7,12 +7,11 @@ import type {
   Team,
 } from "@/types/game";
 import {
+  activeTeamDefinitions,
   boardDistribution,
   categories,
   defaultRoomSettings,
-  defaultTeamNames,
   startingScore,
-  teamColors,
 } from "./constants";
 
 const now = Date.now();
@@ -68,10 +67,10 @@ export const mockRooms: Room[] = [
     playerCodeExpiresAt: now + sixHours,
     expiresAt: now + twelveHours,
     status: "waiting",
-    settings: defaultRoomSettings,
+    settings: { ...defaultRoomSettings, teamsCount: 2 },
     createdAt: now,
     updatedAt: now,
-    currentTurnTeamId: "room-4821-team-1",
+    currentTurnTeamId: "blue-team",
   },
   {
     id: "room-2026",
@@ -82,21 +81,21 @@ export const mockRooms: Room[] = [
     playerCodeExpiresAt: now + sixHours,
     expiresAt: now + twelveHours,
     status: "waiting",
-    settings: { ...defaultRoomSettings, teamsCount: 3, playersPerTeam: 4 },
+    settings: { ...defaultRoomSettings, teamsCount: 2, playersPerTeam: 4 },
     createdAt: now,
     updatedAt: now,
-    currentTurnTeamId: "room-2026-team-1",
+    currentTurnTeamId: "blue-team",
   },
 ];
 
 export const mockRoom = mockRooms[0];
 
 function createTeamsForMockRoom(room: Room): Team[] {
-  return Array.from({ length: room.settings.teamsCount }, (_, index) => ({
-    id: `${room.id}-team-${index + 1}`,
+  return activeTeamDefinitions.map((teamDefinition, index) => ({
+    id: teamDefinition.id,
     roomId: room.id,
-    name: defaultTeamNames[index] ?? `فريق ${index + 1}`,
-    color: teamColors[index] ?? "bg-slate-600",
+    name: teamDefinition.defaultName,
+    color: teamDefinition.color,
     score: startingScore,
     order: index,
     captainId: undefined,
@@ -107,7 +106,7 @@ function createTeamsForMockRoom(room: Room): Team[] {
 }
 
 export const mockTeams: Team[] = mockRooms.flatMap(createTeamsForMockRoom).map((team) =>
-  team.id === "room-4821-team-1"
+  team.roomId === "room-4821" && team.id === "blue-team"
     ? { ...team, captainId: "player-1", captainPlayerId: "player-1", boardLocked: true }
     : team,
 );
@@ -118,7 +117,7 @@ export const mockPlayers: Player[] = [
     roomId: "room-4821",
     name: "نورة",
     uid: "local-player-1",
-    teamId: "room-4821-team-1",
+    teamId: "blue-team",
     role: "captain",
     isCaptain: true,
     joinedAt: now,
@@ -129,7 +128,7 @@ export const mockPlayers: Player[] = [
     roomId: "room-4821",
     name: "سالم",
     uid: "local-player-2",
-    teamId: "room-4821-team-1",
+    teamId: "blue-team",
     role: "player",
     isCaptain: false,
     joinedAt: now,
@@ -140,7 +139,7 @@ export const mockPlayers: Player[] = [
     roomId: "room-4821",
     name: "مازن",
     uid: "local-player-3",
-    teamId: "room-4821-team-2",
+    teamId: "red-team",
     role: "player",
     isCaptain: false,
     joinedAt: now,

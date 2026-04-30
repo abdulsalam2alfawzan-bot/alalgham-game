@@ -12,6 +12,7 @@ import type {
   Turn,
 } from "@/types/game";
 import {
+  createDefaultBoardSquares,
   mockBoards,
   mockPlayers,
   mockRoom,
@@ -19,6 +20,12 @@ import {
   mockTeams,
   sampleQuestions,
 } from "./mockData";
+import {
+  activeTeamDefinitions,
+  getDefaultTeamName,
+  isActiveTeamId,
+  startingScore,
+} from "./constants";
 
 export type SessionRole = "player" | "organizer";
 
@@ -49,6 +56,7 @@ type LegacyRoom = Partial<Room> & {
 const localStateKey = "alalgham.mvp.state";
 const twelveHours = 12 * 60 * 60 * 1000;
 const sixHours = 6 * 60 * 60 * 1000;
+const legacyDefaultTeamNames = ["الصقور", "النخيل", "النجوم", "الموج"];
 
 const initialState: LocalGameState = {
   rooms: mockRooms,
@@ -64,7 +72,7 @@ const initialState: LocalGameState = {
 
 function normalizeSettings(settings: LegacyRoom["settings"]): RoomSettings {
   return {
-    teamsCount: settings?.teamsCount ?? settings?.teamCount ?? 4,
+    teamsCount: 2,
     playersPerTeam: settings?.playersPerTeam ?? 3,
     categories: settings?.categories ?? [],
     answerDurations: settings?.answerDurations ?? {
@@ -98,20 +106,113 @@ function migrateRoom(room: LegacyRoom, index: number): Room {
     settings: normalizeSettings(room.settings),
     createdAt: room.createdAt ?? now,
     updatedAt: room.updatedAt ?? now,
-    currentTurnTeamId: room.currentTurnTeamId,
+    currentTurnTeamId: mapLegacyTeamId(room.currentTurnTeamId) ?? room.currentTurnTeamId,
   };
 }
 
+function mapLegacyTeamId(teamId: string | undefined, order?: number) {
+  if (isActiveTeamId(teamId)) {
+    return teamId;
+  }
+
+  if (teamId?.endsWith("-team-1") || order === 0) {
+    return "blue-team";
+  }
+
+  if (teamId?.endsWith("-team-2") || order === 1) {
+    return "red-team";
+  }
+
+  return undefined;
+}
+
+function migrateTeams(rooms: Room[], teams: Team[] | undefined): Team[] {
+  const existingTeams = teams?.length ? teams : mockTeams;
+
+  return rooms.flatMap((room) =>
+    activeTeamDefinitions.map((teamDefinition, index) => {
+      const source = existingTeams.find(
+        (team) =>
+          team.roomId === room.id &&
+          (team.id === teamDefinition.id || mapLegacyTeamId(team.id, team.order) === teamDefinition.id),
+      );
+      const sourceName = source?.name?.trim();
+      const name = sourceName && !legacyDefaultTeamNames.includes(sourceName)
+        ? sourceName
+        : getDefaultTeamName(teamDefinition.id, index);
+
+      return {
+        id: teamDefinition.id,
+        roomId: room.id,
+        name,
+        color: teamDefinition.color,
+        score: source?.score ?? startingScore,
+        order: index,
+        captainId: source?.captainId,
+        captainPlayerId: source?.captainPlayerId,
+        doubleAvailable: source?.doubleAvailable ?? true,
+        boardLocked: source?.boardLocked ?? false,
+      };
+    }),
+  );
+}
+
+function migratePlayers(players: Player[] | undefined): Player[] {
+  return (players?.length ? players : mockPlayers).map((player) => ({
+    ...player,
+    teamId: mapLegacyTeamId(player.teamId),
+    role: player.role ?? (player.isCaptain ? "captain" : "player"),
+    status: player.status ?? "active",
+  }));
+}
+
+function migrateBoards(rooms: Room[], boards: Board[] | undefined): Board[] {
+  const existingBoards = boards?.length ? boards : mockBoards;
+
+  return rooms.flatMap((room) =>
+    activeTeamDefinitions.map((teamDefinition) => {
+      const source = existingBoards.find(
+        (board) =>
+          board.roomId === room.id &&
+          (board.teamId === teamDefinition.id || mapLegacyTeamId(board.teamId) === teamDefinition.id),
+      );
+
+      if (!source) {
+        const now = Date.now();
+        return {
+          id: `board-${teamDefinition.id}`,
+          roomId: room.id,
+          teamId: teamDefinition.id,
+          locked: false,
+          squares: createDefaultBoardSquares(room.id, teamDefinition.id),
+          createdAt: now,
+          updatedAt: now,
+        };
+      }
+
+      return {
+        ...source,
+        id: `board-${teamDefinition.id}`,
+        roomId: room.id,
+        teamId: teamDefinition.id,
+        squares: source.squares.map((square) => ({
+          ...square,
+          roomId: room.id,
+          teamId: teamDefinition.id,
+        })),
+      };
+    }),
+  );
+}
+
 function migrateLocalState(state: Partial<LocalGameState>): LocalGameState {
+  const rooms = (state.rooms?.length ? state.rooms : mockRooms).map(migrateRoom);
+
   return {
-    rooms: (state.rooms?.length ? state.rooms : mockRooms).map(migrateRoom),
-    teams: state.teams?.length ? state.teams : mockTeams,
-    players: (state.players?.length ? state.players : mockPlayers).map((player) => ({
-      ...player,
-      role: player.role ?? (player.isCaptain ? "captain" : "player"),
-      status: player.status ?? "active",
-    })),
-    boards: state.boards?.length ? state.boards : mockBoards,
+    rooms,
+    teams: migrateTeams(rooms, state.teams),
+    players: migratePlayers(state.players),
+    boards: migrateBoards(rooms, state.boards),
     questions: state.questions?.length ? state.questions : sampleQuestions,
     turns: state.turns ?? [],
     events: state.events ?? [],

@@ -5,7 +5,7 @@ export const platformName = "جوّكم";
 
 export const startingScore = 1000;
 export const minePenalty = 500;
-export const teamCountOptions = [2, 3, 4];
+export const teamCountOptions = [2];
 export const playersPerTeamOptions = [1, 2, 3, 4, 5];
 export const boardSize = 12;
 
@@ -38,7 +38,7 @@ export const defaultAnswerDurations: Record<PointValue, number> = {
 };
 
 export const defaultRoomSettings: RoomSettings = {
-  teamsCount: 4,
+  teamsCount: 2,
   playersPerTeam: 3,
   categories: categories.slice(0, 4),
   answerDurations: defaultAnswerDurations,
@@ -49,11 +49,38 @@ export const defaultRoomSettings: RoomSettings = {
   startingScore,
 };
 
-export const teamColors = [
-  "bg-teal-600",
-  "bg-amber-500",
-  "bg-indigo-600",
-  "bg-rose-600",
-];
+export const activeTeamDefinitions = [
+  {
+    id: "blue-team",
+    defaultName: "الفريق الأزرق",
+    color: "bg-blue-600",
+    theme: "blue",
+  },
+  {
+    id: "red-team",
+    defaultName: "الفريق الأحمر",
+    color: "bg-red-600",
+    theme: "red",
+  },
+] as const;
 
-export const defaultTeamNames = ["الصقور", "النخيل", "النجوم", "الموج"];
+export const futureTeamDefinitions = [
+  { id: "future-team-3", name: "الفريق الثالث — قريبًا" },
+  { id: "future-team-4", name: "الفريق الرابع — قريبًا" },
+] as const;
+
+export const activeTeamIds: string[] = activeTeamDefinitions.map((team) => team.id);
+
+export const teamColors = activeTeamDefinitions.map((team) => team.color);
+
+export const defaultTeamNames = activeTeamDefinitions.map((team) => team.defaultName);
+
+export function isActiveTeamId(teamId: string | undefined) {
+  return Boolean(teamId && activeTeamIds.includes(teamId));
+}
+
+export function getDefaultTeamName(teamId: string, index = 0) {
+  return activeTeamDefinitions.find((team) => team.id === teamId)?.defaultName
+    ?? defaultTeamNames[index]
+    ?? `فريق ${index + 1}`;
+}

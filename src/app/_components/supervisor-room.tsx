@@ -26,6 +26,7 @@ import { addGameEvent, getRoomEvents } from "@/lib/game/eventService";
 import { getObjections, resolveObjection } from "@/lib/game/objectionService";
 import { getPlayers, assignPlayerToTeam, kickPlayer } from "@/lib/game/playerService";
 import { getQuestions } from "@/lib/game/questionService";
+import { futureTeamDefinitions, getDefaultTeamName } from "@/lib/game/constants";
 import { buildJoinUrl, getRoom, updateRoomStatus } from "@/lib/game/roomService";
 import { adjustTeamScore, getTeams, removeCaptain, saveTeam, setCaptain } from "@/lib/game/teamService";
 import { getCurrentTurn } from "@/lib/game/turnService";
@@ -113,6 +114,7 @@ export function SupervisorRoom() {
   const currentQuestion = questions[0];
   const activeTeam = teams.find((team) => team.id === selectedTeamId);
   const visibleEvents = showMoreEvents ? events : events.slice(0, 10);
+  const canEditTeamNames = room ? !["playing", "paused", "finished", "expired"].includes(room.status) : false;
 
   const roomAccessMessage = useMemo(() => {
     if (!room) {
@@ -167,7 +169,12 @@ export function SupervisorRoom() {
       return;
     }
 
-    await saveTeam({ ...team, name: sanitizeTeamName(name) || team.name });
+    if (!canEditTeamNames) {
+      setMessage("يمكن تعديل أسماء الفرق قبل بدء اللعبة فقط");
+      return;
+    }
+
+    await saveTeam({ ...team, name: sanitizeTeamName(name) || getDefaultTeamName(team.id, team.order) });
     await loadSupervisorRoom();
   }
 
@@ -390,6 +397,47 @@ export function SupervisorRoom() {
         </div>
       </Panel>
 
+      <Panel title="إعداد الفرق">
+        <div className="grid gap-4 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+          <p className="text-sm font-bold leading-6 text-slate-600">
+            يمكن تعديل اسمي الفريقين قبل بدء اللعبة. الفريق الثالث والرابع غير متاحين في هذا الـ MVP.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {teams.map((team, index) => (
+              <label key={team.id} className="grid gap-2">
+                <span className="font-bold text-slate-700">
+                  {index === 0 ? "اسم الفريق الأول" : "اسم الفريق الثاني"}
+                </span>
+                <input
+                  className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-lg font-black outline-none focus:border-teal-500 disabled:bg-slate-100 disabled:text-slate-400"
+                  value={team.name}
+                  maxLength={25}
+                  disabled={!canEditTeamNames}
+                  onChange={(event) => {
+                    const nextName = sanitizeTeamName(event.target.value);
+                    setTeams((current) =>
+                      current.map((item) =>
+                        item.roomId === team.roomId && item.id === team.id ? { ...item, name: nextName } : item,
+                      ),
+                    );
+                  }}
+                  onBlur={(event) => updateTeamName(team, event.target.value)}
+                  placeholder={getDefaultTeamName(team.id, team.order)}
+                />
+              </label>
+            ))}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {futureTeamDefinitions.map((team) => (
+              <div key={team.id} className="rounded-3xl border border-slate-200 bg-slate-100 p-4 text-slate-400">
+                <p className="text-lg font-black">{team.name}</p>
+                <p className="mt-1 text-sm font-bold">غير متاح للتفعيل الآن</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </Panel>
+
       <Panel title="اللاعبون">
         <div className="grid gap-3">
           {activePlayers.map((player) => {
@@ -404,7 +452,7 @@ export function SupervisorRoom() {
                   </p>
                 </div>
                 <select value={player.teamId ?? ""} onChange={(event) => movePlayer(player.id, event.target.value)} className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-3 font-bold">
-                  <option value="">بدون فريق</option>
+                  <option value="" disabled>اختر فريق</option>
                   {teams.map((team) => (
                     <option key={team.id} value={team.id}>{team.name}</option>
                   ))}
@@ -441,18 +489,22 @@ export function SupervisorRoom() {
             const members = activePlayers.filter((player) => player.teamId === team.id);
             return (
               <article key={team.id} className="grid gap-3 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
-                <input
-                  className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-lg font-black outline-none focus:border-teal-500"
-                  value={team.name}
-                  maxLength={25}
-                  onChange={(event) => {
-                    const nextName = sanitizeTeamName(event.target.value);
-                    setTeams((current) => current.map((item) => item.id === team.id ? { ...item, name: nextName } : item));
-                  }}
-                  onBlur={(event) => updateTeamName(team, event.target.value)}
-                />
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <span className={`h-5 w-5 rounded-full ${team.color}`} />
+                    <div>
+                      <h3 className="text-xl font-black text-slate-950">{team.name}</h3>
+                      <p className="text-sm font-bold text-slate-500">اللون: {team.id === "blue-team" ? "أزرق" : "أحمر"}</p>
+                    </div>
+                  </div>
+                  <strong className="rounded-2xl bg-slate-100 px-3 py-2 text-sm font-black text-slate-700">
+                    {members.length} لاعب
+                  </strong>
+                </div>
                 <p className="text-sm font-bold text-slate-500">الكابتن: {captain?.name ?? "لم يحدد"}</p>
-                <p className="text-sm font-bold text-slate-500">الأعضاء: {members.length}</p>
+                <div className="rounded-2xl bg-slate-50 px-3 py-2 text-sm font-bold leading-7 text-slate-600">
+                  {members.length ? members.map((member) => member.name).join("، ") : "لا يوجد أعضاء بعد"}
+                </div>
                 <p className={`rounded-2xl px-3 py-2 text-sm font-bold ${team.boardLocked ? "bg-teal-50 text-teal-900" : "bg-slate-50 text-slate-600"}`}>
                   اللوحة: {team.boardLocked ? "جاهزة" : "غير جاهزة"}
                 </p>
