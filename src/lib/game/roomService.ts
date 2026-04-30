@@ -13,9 +13,18 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import type { Room, RoomSettings, Team } from "@/types/game";
+import {
+  generatePlayerCode,
+  generateSupervisorCode,
+  getPlayerCodeExpiry,
+  getRoomExpiry,
+  getSupervisorCodeExpiry,
+} from "@/lib/auth/roomAccess";
+import { saveSupervisorSession } from "@/lib/auth/sessionRole";
 import { signInAnonymouslyIfNeeded } from "@/lib/firebase/auth";
 import { getPublicAppUrl } from "@/lib/firebase/client";
 import { getFirebaseDb } from "@/lib/firebase/firestore";
+import { clampNumber, sanitizeRoomName } from "@/lib/security/inputSafety";
 import {
   defaultRoomSettings,
   defaultTeamNames,
@@ -28,6 +37,7 @@ import {
   generateRoomCode,
   readLocalState,
   rememberCurrentRoom,
+  rememberOrganizerSession,
   updateLocalState,
 } from "./localStore";
 
@@ -39,7 +49,7 @@ export type CreateRoomInput = {
 };
 
 export function buildJoinPath(roomCode: string) {
-  return `/join?room=${encodeURIComponent(roomCode)}`;
+  return `/join?code=${encodeURIComponent(roomCode)}`;
 }
 
 export function buildJoinUrl(roomCode: string) {
@@ -60,29 +70,66 @@ function createTeamsForRoom(roomId: string, teamCount: number): Team[] {
   }));
 }
 
+function normalizeRoomSettings(settings: RoomSettings): RoomSettings {
+  const teamsCount = clampNumber(settings.teamsCount ?? settings.teamCount, 2, 4, defaultRoomSettings.teamsCount);
+  const playersPerTeam = clampNumber(settings.playersPerTeam, 1, 5, defaultRoomSettings.playersPerTeam);
+  const objectionsPerTeam = clampNumber(
+    settings.objectionsPerTeam ?? settings.objectionsCount,
+    0,
+    5,
+    defaultRoomSettings.objectionsPerTeam,
+  );
+
+  return {
+    ...defaultRoomSettings,
+    ...settings,
+    teamsCount,
+    teamCount: teamsCount,
+    playersPerTeam,
+    minePenalty: 500,
+    mineReflection: Boolean(settings.mineReflectionEnabled ?? settings.mineReflection),
+    mineReflectionEnabled: Boolean(settings.mineReflectionEnabled ?? settings.mineReflection),
+    objectionsCount: objectionsPerTeam,
+    objectionsPerTeam,
+    startingScore,
+  };
+}
+
 export async function createRoom(input: CreateRoomInput) {
   const db = getFirebaseDb();
   const user = await signInAnonymouslyIfNeeded();
   const now = Date.now();
   const organizerUid = input.organizerUid ?? user?.uid ?? "local-organizer";
   const roomCode = generateRoomCode();
-  const settings = { ...defaultRoomSettings, ...input.settings };
+  const settings = normalizeRoomSettings(input.settings);
+  const supervisorCode = generateSupervisorCode(roomCode);
+  let playerCode = generatePlayerCode(roomCode);
+  if (playerCode === supervisorCode) {
+    playerCode = generatePlayerCode(`${roomCode}1`);
+  }
+  const roomName = sanitizeRoomName(input.name) || "غرفة الألغام";
 
   if (db) {
     try {
       const roomRef = doc(collection(db, "rooms"));
       const room: Room = {
         id: roomRef.id,
-        name: input.name,
+        name: roomName,
         roomCode,
         activationCode: input.activationCode,
+        organizerId: organizerUid,
         organizerUid,
+        supervisorCode,
+        supervisorCodeExpiresAt: getSupervisorCodeExpiry(now),
+        playerCode,
+        playerCodeExpiresAt: getPlayerCodeExpiry(now),
+        expiresAt: getRoomExpiry(now),
         status: "waiting",
         settings,
         createdAt: now,
         updatedAt: now,
       };
-      const teams = createTeamsForRoom(room.id, settings.teamCount);
+      const teams = createTeamsForRoom(room.id, settings.teamsCount);
       const batch = writeBatch(db);
 
       batch.set(roomRef, room);
@@ -100,6 +147,8 @@ export async function createRoom(input: CreateRoomInput) {
         roomCode,
       });
       rememberCurrentRoom(room.id);
+      rememberOrganizerSession(organizerUid);
+      saveSupervisorSession(room);
       return { room, teams };
     } catch (error) {
       console.warn("Firebase room create failed; using local fallback.", error);
@@ -108,16 +157,22 @@ export async function createRoom(input: CreateRoomInput) {
 
   const room: Room = {
     id: createLocalId("room"),
-    name: input.name,
+    name: roomName,
     roomCode,
     activationCode: input.activationCode,
+    organizerId: organizerUid,
     organizerUid,
+    supervisorCode,
+    supervisorCodeExpiresAt: getSupervisorCodeExpiry(now),
+    playerCode,
+    playerCodeExpiresAt: getPlayerCodeExpiry(now),
+    expiresAt: getRoomExpiry(now),
     status: "waiting",
     settings,
     createdAt: now,
     updatedAt: now,
   };
-  const teams = createTeamsForRoom(room.id, settings.teamCount);
+  const teams = createTeamsForRoom(room.id, settings.teamsCount);
 
   updateLocalState((state) => ({
     ...state,
@@ -136,6 +191,8 @@ export async function createRoom(input: CreateRoomInput) {
       ...state.events,
     ],
   }));
+  rememberOrganizerSession(organizerUid);
+  saveSupervisorSession(room);
 
   return { room, teams };
 }

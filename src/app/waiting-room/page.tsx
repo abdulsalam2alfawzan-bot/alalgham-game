@@ -1,35 +1,44 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { QRCodeSVG } from "qrcode.react";
 import { ActionLink, InfoGrid, PageShell, Panel, RoomBadge } from "../_components/game-ui";
-import type { Player, Room, Team } from "@/types/game";
-import { getPlayers, assignPlayerToTeam } from "@/lib/game/playerService";
-import { buildJoinUrl, getRoom, getRoomByCode, updateRoomStatus } from "@/lib/game/roomService";
-import { getTeams, setCaptain } from "@/lib/game/teamService";
+import type { EffectiveRole, Player, Room, Team } from "@/types/game";
+import { getSessionPlayerId, readRoomSession } from "@/lib/auth/sessionRole";
+import { getEffectiveRole } from "@/lib/game/permissions";
+import { getPlayers } from "@/lib/game/playerService";
+import { getRoom } from "@/lib/game/roomService";
+import { getTeams } from "@/lib/game/teamService";
 
 export default function WaitingRoomPage() {
-  const router = useRouter();
   const [room, setRoom] = useState<Room | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
-  const [copyMessage, setCopyMessage] = useState("");
-
-  async function loadWaitingRoom() {
-    const params = new URLSearchParams(window.location.search);
-    const roomCode = params.get("room");
-    const activeRoom = roomCode ? await getRoomByCode(roomCode) : await getRoom();
-    if (!activeRoom) {
-      return;
-    }
-
-    setRoom(activeRoom);
-    setTeams(await getTeams(activeRoom.id));
-    setPlayers(await getPlayers(activeRoom.id));
-  }
+  const [actorId, setActorId] = useState<string>();
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
+    async function loadWaitingRoom() {
+      const session = readRoomSession();
+      const params = new URLSearchParams(window.location.search);
+      const roomId = params.get("room") ?? session?.roomId;
+      const activeRoom = await getRoom(roomId ?? undefined);
+      if (!activeRoom) {
+        setLoaded(true);
+        return;
+      }
+
+      const roomTeams = await getTeams(activeRoom.id);
+      const roomPlayers = await getPlayers(activeRoom.id);
+      const playerId = getSessionPlayerId(session);
+      const player = roomPlayers.find((item) => item.id === playerId);
+
+      setActorId(player?.id);
+      setRoom(activeRoom);
+      setTeams(roomTeams);
+      setPlayers(roomPlayers);
+      setLoaded(true);
+    }
+
     const timer = window.setTimeout(() => {
       void loadWaitingRoom();
     }, 0);
@@ -37,189 +46,111 @@ export default function WaitingRoomPage() {
     return () => window.clearTimeout(timer);
   }, []);
 
-  async function handleAssign(playerId: string, teamId: string) {
-    if (!room) {
-      return;
-    }
+  const session = readRoomSession();
+  const currentPlayer = players.find((player) => player.id === actorId);
+  const effectiveRole: EffectiveRole = getEffectiveRole(actorId, room, session, teams, currentPlayer);
+  const currentTeam = teams.find((team) => team.id === currentPlayer?.teamId);
+  const currentTeamMembers = currentTeam
+    ? players.filter((player) => player.teamId === currentTeam.id && player.status !== "kicked")
+    : [];
 
-    await assignPlayerToTeam(room.id, playerId, teamId);
-    await loadWaitingRoom();
+  if (!loaded) {
+    return (
+      <PageShell
+        eyebrow="انتظار اللاعبين"
+        title="غرفة الانتظار"
+        description="جاري تحميل الغرفة."
+      >
+        <Panel>
+          <p className="rounded-2xl bg-slate-50 px-4 py-3 text-sm font-bold text-slate-600">
+            جاري التحميل...
+          </p>
+        </Panel>
+      </PageShell>
+    );
   }
 
-  async function handleCaptain(teamId: string, playerId: string) {
-    if (!room) {
-      return;
-    }
-
-    await setCaptain(room.id, teamId, playerId);
-    await loadWaitingRoom();
+  if (effectiveRole === "organizer") {
+    return (
+      <PageShell
+        eyebrow="المشرف"
+        title="غرفة الانتظار"
+        description="إدارة اللاعبين والفرق تتم من غرفة المشرف."
+        showOrganizerLink
+      >
+        <Panel title="غرفة المشرف">
+          <div className="grid gap-4 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+            <p className="text-sm font-bold leading-6 text-slate-600">
+              هذه شاشة انتظار اللاعبين. افتح غرفة المشرف لإدارة الأكواد والفرق وبدء اللعبة.
+            </p>
+            <ActionLink href={`/supervisor-room?room=${room?.id ?? ""}`} variant="secondary">
+              فتح غرفة المشرف
+            </ActionLink>
+          </div>
+        </Panel>
+      </PageShell>
+    );
   }
-
-  async function handleStartBoards() {
-    if (!room) {
-      return;
-    }
-
-    await updateRoomStatus(room.id, "board_setup");
-    router.push("/teams");
-  }
-
-  async function copyInviteLink() {
-    if (!room) {
-      return;
-    }
-
-    const link = buildJoinUrl(room.roomCode);
-    try {
-      await navigator.clipboard.writeText(link);
-      setCopyMessage("تم نسخ رابط الدعوة");
-    } catch {
-      setCopyMessage("انسخ الرابط يدويًا من الحقل");
-    }
-  }
-
-  const joinLink = room ? buildJoinUrl(room.roomCode) : "";
-  const playerCount = players.length;
 
   return (
     <PageShell
       eyebrow="انتظار اللاعبين"
       title="غرفة الانتظار"
-      description="شارك رمز الغرفة أو QR الدعوة، ثم وزّع اللاعبين على الفرق."
+      description="تابع حالة انضمامك وانتظر توزيع الفرق من المشرف."
     >
-      <RoomBadge code={room?.roomCode ?? "----"} />
-
-      <Panel title="دعوة اللاعبين">
-        <div className="grid gap-4 lg:grid-cols-[1fr_12rem] lg:items-center">
-          <div className="grid gap-3 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
-            <label className="grid gap-2">
-              <span className="text-sm font-bold text-slate-500">رابط انضمام اللاعبين</span>
-              <input
-                readOnly
-                value={joinLink}
-                className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-bold text-slate-700 outline-none"
-              />
-            </label>
-            <button
-              type="button"
-              onClick={copyInviteLink}
-              className="min-h-12 rounded-2xl bg-slate-950 px-4 text-base font-black text-white"
-            >
-              نسخ رابط الدعوة
-            </button>
-            {copyMessage ? (
-              <p className="rounded-2xl bg-teal-50 px-4 py-3 text-sm font-bold text-teal-900">
-                {copyMessage}
-              </p>
-            ) : null}
-            <p className="text-sm font-bold leading-6 text-slate-500">
-              رمز التفعيل للمنظم فقط. رمز الغرفة وQR الدعوة للاعبين.
-            </p>
-          </div>
-
-          <div className="grid justify-items-center gap-2">
-            {joinLink ? (
-              <QRCodeSVG
-                value={joinLink}
-                size={176}
-                marginSize={2}
-                className="rounded-2xl bg-white p-2 shadow-sm ring-1 ring-slate-200"
-              />
-            ) : null}
-            <p className="text-center text-xs font-bold text-slate-500">
-              QR دعوة اللاعبين
-            </p>
-          </div>
-        </div>
-      </Panel>
+      <RoomBadge code={room?.playerCode ?? "----"} />
 
       <InfoGrid
         items={[
           { label: "الغرفة", value: room?.name ?? "..." },
-          { label: "اللاعبون", value: `${playerCount}` },
-          { label: "الفرق", value: `${teams.length}` },
           { label: "الحالة", value: room?.status ?? "..." },
+          { label: "اللاعب", value: currentPlayer?.name ?? "..." },
+          { label: "الفريق", value: currentTeam?.name ?? "لم يتم التوزيع" },
         ]}
       />
 
-      <Panel title="اللاعبون">
-        <div className="grid gap-3">
-          {players.map((player) => (
-            <article
-              key={player.id}
-              className="grid gap-3 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200 sm:grid-cols-[1fr_12rem_10rem]"
-            >
-              <div>
-                <h3 className="font-black text-slate-950">{player.name}</h3>
-                <p className="text-sm font-bold text-slate-500">
-                  {player.isCaptain ? "كابتن" : "لاعب"}
-                </p>
-              </div>
-              <select
-                className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-3 font-bold"
-                value={player.teamId ?? ""}
-                onChange={(event) => handleAssign(player.id, event.target.value)}
-              >
-                <option value="">بدون فريق</option>
-                {teams.map((team) => (
-                  <option key={team.id} value={team.id}>
-                    {team.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                disabled={!player.teamId}
-                onClick={() => player.teamId && handleCaptain(player.teamId, player.id)}
-                className="min-h-12 rounded-2xl bg-amber-400 px-3 font-black text-slate-950 disabled:opacity-40"
-              >
-                تعيين كابتن
-              </button>
-            </article>
-          ))}
-          {!players.length ? (
-            <p className="rounded-2xl bg-slate-50 px-4 py-3 text-sm font-bold text-slate-500">
-              لم ينضم أي لاعب بعد.
+      <Panel title="حالة اللاعب">
+        <div className="grid gap-4 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+          <div className="grid gap-2">
+            <p className="text-sm font-bold text-slate-500">اسم اللاعب</p>
+            <p className="text-2xl font-black text-slate-950">{currentPlayer?.name ?? "لاعب"}</p>
+          </div>
+          <div className="grid gap-2">
+            <p className="text-sm font-bold text-slate-500">حالة التوزيع</p>
+            <p className="font-bold text-slate-700">
+              {currentTeam ? `تم تعيينك في ${currentTeam.name}` : "لم يتم تعيينك في فريق بعد"}
             </p>
+          </div>
+          {currentTeam ? (
+            <div className="grid gap-2">
+              <p className="text-sm font-bold text-slate-500">أعضاء الفريق</p>
+              <p className="font-bold leading-7 text-slate-700">
+                {currentTeamMembers.map((player) => player.name).join("، ") || "لا يوجد لاعبون"}
+              </p>
+            </div>
           ) : null}
+          <p className="rounded-2xl bg-slate-50 px-4 py-3 text-sm font-bold leading-6 text-slate-600">
+            بانتظار المشرف لتوزيع الفرق وبدء اللعبة
+          </p>
         </div>
       </Panel>
 
-      <Panel title="الفرق">
-        <div className="grid gap-3 sm:grid-cols-2">
-          {teams.map((team) => {
-            const captain = players.find((player) => player.id === team.captainPlayerId);
-            const teamPlayers = players.filter((player) => player.teamId === team.id);
-            return (
-              <article key={team.id} className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
-                <div className="flex items-center justify-between gap-3">
-                  <h3 className="font-black text-slate-950">{team.name}</h3>
-                  <span className={`h-4 w-4 rounded-full ${team.color}`} />
-                </div>
-                <p className="mt-2 text-sm font-bold text-slate-500">
-                  الكابتن: {captain?.name ?? "لم يحدد"}
-                </p>
-                <p className="mt-3 text-sm leading-7 text-slate-600">
-                  {teamPlayers.map((player) => player.name).join("، ") || "لا يوجد لاعبون"}
-                </p>
-              </article>
-            );
-          })}
-        </div>
-      </Panel>
-
-      <section className="grid gap-3 sm:grid-cols-2">
-        <button
-          type="button"
-          onClick={handleStartBoards}
-          className="min-h-14 rounded-2xl bg-teal-600 px-5 py-4 text-lg font-black text-white shadow-sm"
-        >
-          بدء تجهيز اللوحات
-        </button>
-        <ActionLink href="/join" variant="light">
-          دخول لاعب
-        </ActionLink>
-      </section>
+      {effectiveRole === "captain" ? (
+        <Panel title="صلاحيات الكابتن">
+          <div className="grid gap-3 rounded-3xl bg-amber-50 p-4 text-amber-950 ring-1 ring-amber-100">
+            <p className="text-lg font-black">أنت كابتن الفريق</p>
+            {room?.status === "board_setup" ? (
+              <ActionLink href="/captain-board" variant="secondary">
+                تجهيز لوحة الفريق
+              </ActionLink>
+            ) : (
+              <p className="text-sm font-bold leading-6">
+                بانتظار بدء تجهيز اللوحات
+              </p>
+            )}
+          </div>
+        </Panel>
+      ) : null}
     </PageShell>
   );
 }

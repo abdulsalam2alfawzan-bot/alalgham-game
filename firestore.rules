@@ -5,8 +5,21 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // MVP rules: enough for private testing with anonymous auth.
-    // Production should move activation redemption and score authority to a trusted server.
+    function room(roomId) {
+      return get(/databases/$(database)/documents/rooms/$(roomId));
+    }
+
+    function isRoomSupervisor(roomId) {
+      return signedIn() && room(roomId).data.organizerUid == request.auth.uid;
+    }
+
+    // MVP rules for anonymous-auth testing.
+    // Important production note:
+    // Client-side apps cannot fully protect supervisor codes, score changes,
+    // activation redemption, or expiry logic. Production should harden these
+    // checks with stricter Firestore rules, custom claims, or trusted server-side
+    // code / Cloud Functions if high-stakes enforcement is required.
+
     match /activationCodes/{code} {
       allow get: if signedIn();
       allow list: if false;
@@ -32,44 +45,77 @@ service cloud.firestore {
       allow get: if true;
       allow list: if false;
       allow create: if signedIn()
-        && request.resource.data.organizerUid == request.auth.uid;
-      allow update: if signedIn()
-        && resource.data.organizerUid == request.auth.uid;
+        && request.resource.data.organizerUid == request.auth.uid
+        && request.resource.data.supervisorCode is string
+        && request.resource.data.playerCode is string
+        && request.resource.data.supervisorCode != request.resource.data.playerCode;
+
+      // Players must not update room settings, scores, codes, captain assignment,
+      // supervisor code fields, or room phases. Only the anonymous uid that created
+      // the room may update these MVP supervisor fields.
+      allow update: if isRoomSupervisor(roomId)
+        && request.resource.data.supervisorCode == resource.data.supervisorCode
+        && request.resource.data.playerCode == resource.data.playerCode;
       allow delete: if false;
 
       match /players/{playerId} {
         allow read: if true;
+
+        // Joining creates a room-scoped player only. The player code itself should
+        // not grant access to supervisor fields or room settings.
         allow create: if signedIn()
-          && request.resource.data.uid == request.auth.uid;
+          && request.resource.data.roomId == roomId
+          && request.resource.data.role == "player"
+          && request.resource.data.status == "active";
+
+        // Players may update only their own basic presence in a production model.
+        // MVP keeps supervisor updates available to the room creator for team and
+        // captain assignment, kicking, and status changes.
         allow update: if signedIn()
           && (
-            resource.data.uid == request.auth.uid ||
-            get(/databases/$(database)/documents/rooms/$(roomId)).data.organizerUid == request.auth.uid
+            isRoomSupervisor(roomId) ||
+            (
+              resource.data.uid == request.auth.uid
+              && request.resource.data.role == resource.data.role
+              && request.resource.data.teamId == resource.data.teamId
+            )
           );
         allow delete: if false;
       }
 
       match /teams/{teamId} {
         allow read: if true;
-        allow create, update: if signedIn()
-          && get(/databases/$(database)/documents/rooms/$(roomId)).data.organizerUid == request.auth.uid;
+
+        // Players cannot assign captains, modify scores, edit team names, or change
+        // board readiness. These are supervisor-only MVP actions.
+        allow create, update: if isRoomSupervisor(roomId);
         allow delete: if false;
       }
 
-      match /boards/{boardId} {
+      match /boards/{teamId} {
         allow read: if true;
+
+        // MVP allows signed-in captains to submit boards client-side. Production
+        // should validate that the writer is the team's captain and enforce exact
+        // board distribution server-side or with stricter rules.
         allow create, update: if signedIn();
         allow delete: if false;
       }
 
       match /turns/{turnId} {
         allow read: if true;
+
+        // Production should prevent players from judging answers or changing turn
+        // state. MVP keeps writes signed-in while UI/handlers enforce roles.
         allow create, update: if signedIn();
         allow delete: if false;
       }
 
       match /events/{eventId} {
         allow read: if true;
+
+        // Event text must be sanitized by the client. Production should validate
+        // event types and prevent forged supervisor events.
         allow create: if signedIn();
         allow update, delete: if false;
       }
@@ -77,8 +123,13 @@ service cloud.firestore {
       match /objections/{objectionId} {
         allow read: if true;
         allow create: if signedIn();
-        allow update: if signedIn()
-          && get(/databases/$(database)/documents/rooms/$(roomId)).data.organizerUid == request.auth.uid;
+        allow update: if isRoomSupervisor(roomId);
+        allow delete: if false;
+      }
+
+      match /questionsUsed/{questionId} {
+        allow read: if true;
+        allow create, update: if isRoomSupervisor(roomId);
         allow delete: if false;
       }
     }

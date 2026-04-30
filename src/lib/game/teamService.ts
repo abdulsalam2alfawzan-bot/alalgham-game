@@ -1,8 +1,9 @@
 "use client";
 
-import { collection, doc, getDocs, onSnapshot, setDoc, updateDoc, writeBatch } from "firebase/firestore";
-import type { Team } from "@/types/game";
+import { collection, deleteField, doc, getDocs, onSnapshot, setDoc, updateDoc, writeBatch } from "firebase/firestore";
+import type { Player, Team } from "@/types/game";
 import { getFirebaseDb } from "@/lib/firebase/firestore";
+import { sanitizeTeamName } from "@/lib/security/inputSafety";
 import { addGameEvent } from "./eventService";
 import { readLocalState, updateLocalState } from "./localStore";
 
@@ -26,7 +27,7 @@ export async function getTeams(roomId: string) {
 
 export async function saveTeam(team: Team) {
   const db = getFirebaseDb();
-  const updatedTeam = { ...team };
+  const updatedTeam = { ...team, name: sanitizeTeamName(team.name) || team.name };
   if (db) {
     try {
       await setDoc(doc(db, "rooms", team.roomId, "teams", team.id), updatedTeam, {
@@ -46,17 +47,81 @@ export async function saveTeam(team: Team) {
   return updatedTeam;
 }
 
+export async function removeCaptain(roomId: string, teamId: string) {
+  const teams = await getTeams(roomId);
+  const team = teams.find((item) => item.id === teamId);
+  const captainId = team?.captainId ?? team?.captainPlayerId;
+  const db = getFirebaseDb();
+
+  if (db) {
+    try {
+      const batch = writeBatch(db);
+      batch.update(doc(db, "rooms", roomId, "teams", teamId), {
+        captainId: deleteField(),
+        captainPlayerId: deleteField(),
+      });
+      if (captainId) {
+        batch.update(doc(db, "rooms", roomId, "players", captainId), {
+          role: "player",
+          isCaptain: false,
+        });
+      }
+      await batch.commit();
+      await addGameEvent(roomId, "team_updated", "تمت إزالة الكابتن");
+      return;
+    } catch (error) {
+      console.warn("Firebase captain remove failed; using local fallback.", error);
+    }
+  }
+
+  updateLocalState((state) => ({
+    ...state,
+    teams: state.teams.map((item) =>
+      item.roomId === roomId && item.id === teamId
+        ? { ...item, captainId: undefined, captainPlayerId: undefined }
+        : item,
+    ),
+    players: state.players.map((player) =>
+      player.roomId === roomId && player.id === captainId
+        ? { ...player, role: "player", isCaptain: false }
+        : player,
+    ),
+  }));
+}
+
 export async function setCaptain(roomId: string, teamId: string, playerId: string) {
   const db = getFirebaseDb();
   if (db) {
     try {
       const batch = writeBatch(db);
       batch.update(doc(db, "rooms", roomId, "teams", teamId), {
+        captainId: playerId,
         captainPlayerId: playerId,
       });
       batch.update(doc(db, "rooms", roomId, "players", playerId), {
         teamId,
+        role: "captain",
         isCaptain: true,
+      });
+      const teamsSnapshot = await getDocs(collection(db, "rooms", roomId, "teams"));
+      teamsSnapshot.docs.forEach((teamDoc) => {
+        const team = { ...(teamDoc.data() as Team), id: teamDoc.id };
+        if (team.id !== teamId && (team.captainId === playerId || team.captainPlayerId === playerId)) {
+          batch.update(doc(db, "rooms", roomId, "teams", team.id), {
+            captainId: deleteField(),
+            captainPlayerId: deleteField(),
+          });
+        }
+      });
+      const playersSnapshot = await getDocs(collection(db, "rooms", roomId, "players"));
+      playersSnapshot.docs.forEach((playerDoc) => {
+        const player = { ...(playerDoc.data() as Player), id: playerDoc.id };
+        if (player.id !== playerId && player.teamId === teamId && (player.isCaptain || player.role === "captain")) {
+          batch.update(doc(db, "rooms", roomId, "players", player.id), {
+            role: "player",
+            isCaptain: false,
+          });
+        }
       });
       await batch.commit();
       await addGameEvent(roomId, "team_updated", "تم تعيين كابتن");
@@ -70,12 +135,16 @@ export async function setCaptain(roomId: string, teamId: string, playerId: strin
     ...state,
     teams: state.teams.map((team) =>
       team.roomId === roomId && team.id === teamId
-        ? { ...team, captainPlayerId: playerId }
-        : team,
+        ? { ...team, captainId: playerId, captainPlayerId: playerId }
+        : team.roomId === roomId && (team.captainId === playerId || team.captainPlayerId === playerId)
+          ? { ...team, captainId: undefined, captainPlayerId: undefined }
+          : team,
     ),
     players: state.players.map((player) =>
-      player.roomId === roomId
-        ? { ...player, isCaptain: player.id === playerId, teamId: player.id === playerId ? teamId : player.teamId }
+      player.roomId === roomId && player.id === playerId
+        ? { ...player, role: "captain", isCaptain: true, teamId }
+        : player.roomId === roomId && player.teamId === teamId && (player.isCaptain || player.role === "captain")
+          ? { ...player, role: "player", isCaptain: false }
         : player,
     ),
   }));

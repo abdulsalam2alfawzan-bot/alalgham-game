@@ -36,7 +36,7 @@ export function PageShell({
   eyebrow = "الألغام",
   title,
   description,
-  showOrganizerLink = true,
+  showOrganizerLink = false,
   children,
 }: PageShellProps) {
   return (
@@ -60,10 +60,10 @@ export function PageShell({
           </Link>
           {showOrganizerLink ? (
             <Link
-              href="/organizer"
+              href="/supervisor-room"
               className="min-h-12 rounded-full border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm"
             >
-              تحكم
+              غرفة المشرف
             </Link>
           ) : null}
         </header>

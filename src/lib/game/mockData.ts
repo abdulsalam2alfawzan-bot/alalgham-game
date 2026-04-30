@@ -18,6 +18,8 @@ import {
 } from "./constants";
 
 const now = Date.now();
+const mockSupervisorCode = "M-4821-93";
+const mockPlayerCode = "P-4821-27";
 
 export const sampleActivationCodes: ActivationCode[] = mockActivationCodes.map(
   (code) => ({
@@ -73,7 +75,13 @@ export const mockRoom: Room = {
   name: "غرفة الأصدقاء",
   roomCode: "4821",
   activationCode: "DEMO-1234",
+  organizerId: "local-organizer",
   organizerUid: "local-organizer",
+  supervisorCode: mockSupervisorCode,
+  supervisorCodeExpiresAt: now + 12 * 60 * 60 * 1000,
+  playerCode: mockPlayerCode,
+  playerCodeExpiresAt: now + 6 * 60 * 60 * 1000,
+  expiresAt: now + 12 * 60 * 60 * 1000,
   status: "waiting",
   settings: defaultRoomSettings,
   createdAt: now,
@@ -88,6 +96,7 @@ export const mockTeams: Team[] = defaultTeamNames.map((name, index) => ({
   color: teamColors[index],
   score: startingScore,
   order: index,
+  captainId: index === 0 ? "player-1" : undefined,
   captainPlayerId: index === 0 ? "player-1" : undefined,
   doubleAvailable: true,
   boardLocked: index === 0,
@@ -100,8 +109,10 @@ export const mockPlayers: Player[] = [
     name: "نورة",
     uid: "local-player-1",
     teamId: "team-1",
+    role: "captain",
     isCaptain: true,
     joinedAt: now,
+    status: "active",
   },
   {
     id: "player-2",
@@ -109,8 +120,10 @@ export const mockPlayers: Player[] = [
     name: "سالم",
     uid: "local-player-2",
     teamId: "team-1",
+    role: "player",
     isCaptain: false,
     joinedAt: now,
+    status: "active",
   },
   {
     id: "player-3",
@@ -118,8 +131,10 @@ export const mockPlayers: Player[] = [
     name: "مازن",
     uid: "local-player-3",
     teamId: "team-2",
+    role: "player",
     isCaptain: false,
     joinedAt: now,
+    status: "active",
   },
 ];
 

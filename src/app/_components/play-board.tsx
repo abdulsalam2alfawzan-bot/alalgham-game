@@ -1,20 +1,29 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { Board, Question, Room, Team } from "@/types/game";
-import { getBoards, saveBoard } from "@/lib/game/boardService";
+import type { Board, EffectiveRole, Question, Room, Team } from "@/types/game";
+import { readRoomSession } from "@/lib/auth/sessionRole";
+import { getBoards } from "@/lib/game/boardService";
 import { addGameEvent } from "@/lib/game/eventService";
 import { createDefaultBoardSquares } from "@/lib/game/mockData";
+import {
+  canSubmitAnswer,
+  canUseDouble,
+  unauthorizedMessage,
+} from "@/lib/game/permissions";
+import { saveObjection } from "@/lib/game/objectionService";
 import { getQuestions } from "@/lib/game/questionService";
 import { getRoom } from "@/lib/game/roomService";
-import { calculateScoreChange } from "@/lib/game/scoring";
-import { adjustTeamScore, getTeams, saveTeam } from "@/lib/game/teamService";
-import { getNextTeamTurn } from "@/lib/game/turnOrder";
+import { getTeams, saveTeam } from "@/lib/game/teamService";
 import { selectQuestionForSquare } from "@/lib/game/questionSelection";
+import { sanitizeAnswer } from "@/lib/security/inputSafety";
 
-type AnswerPhase = "attacker" | "owner";
+type PlayBoardProps = {
+  role: EffectiveRole;
+  captainTeamId?: string;
+};
 
-export function PlayBoard() {
+export function PlayBoard({ role, captainTeamId }: PlayBoardProps) {
   const [room, setRoom] = useState<Room | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [boards, setBoards] = useState<Board[]>([]);
@@ -22,39 +31,39 @@ export function PlayBoard() {
   const [attackerTeamId, setAttackerTeamId] = useState("");
   const [ownerTeamId, setOwnerTeamId] = useState("");
   const [selectedSquareId, setSelectedSquareId] = useState("");
-  const [phase, setPhase] = useState<AnswerPhase>("attacker");
   const [useDouble, setUseDouble] = useState(false);
   const [submittedAnswer, setSubmittedAnswer] = useState("");
-  const [message, setMessage] = useState("اختر فريقًا منافسًا ومربعًا، ثم أرسل الإجابة.");
+  const [message, setMessage] = useState("اختر فريقًا منافسًا ومربعًا، ثم أرسل الإجابة للمشرف.");
   const [secondsLeft, setSecondsLeft] = useState(30);
 
-  async function loadPlayData() {
-    const activeRoom = await getRoom();
-    if (!activeRoom) {
-      return;
+  useEffect(() => {
+    async function loadPlayData() {
+      const session = readRoomSession();
+      const activeRoom = await getRoom(session?.roomId);
+      if (!activeRoom) {
+        return;
+      }
+
+      const roomTeams = await getTeams(activeRoom.id);
+      const roomBoards = await getBoards(activeRoom.id);
+      const roomQuestions = await getQuestions();
+      const attackerId = captainTeamId ?? activeRoom.currentTurnTeamId ?? roomTeams[0]?.id ?? "";
+      const ownerId = roomTeams.find((team) => team.id !== attackerId)?.id ?? "";
+
+      setRoom(activeRoom);
+      setTeams(roomTeams);
+      setBoards(roomBoards);
+      setQuestions(roomQuestions);
+      setAttackerTeamId(attackerId);
+      setOwnerTeamId(ownerId);
     }
 
-    const roomTeams = await getTeams(activeRoom.id);
-    const roomBoards = await getBoards(activeRoom.id);
-    const roomQuestions = await getQuestions();
-    const firstAttacker = activeRoom.currentTurnTeamId ?? roomTeams[0]?.id ?? "";
-    const firstOwner = roomTeams.find((team) => team.id !== firstAttacker)?.id ?? roomTeams[1]?.id ?? "";
-
-    setRoom(activeRoom);
-    setTeams(roomTeams);
-    setBoards(roomBoards);
-    setQuestions(roomQuestions);
-    setAttackerTeamId(firstAttacker);
-    setOwnerTeamId(firstOwner);
-  }
-
-  useEffect(() => {
     const timer = window.setTimeout(() => {
       void loadPlayData();
     }, 0);
 
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [captainTeamId]);
 
   const attacker = teams.find((team) => team.id === attackerTeamId);
   const owner = teams.find((team) => team.id === ownerTeamId);
@@ -101,99 +110,77 @@ export function PlayBoard() {
     return () => window.clearInterval(timer);
   }, [secondsLeft, selectedSquare]);
 
-  function updateTeamInState(teamId: string, updater: (team: Team) => Team) {
-    setTeams((current) => current.map((team) => (team.id === teamId ? updater(team) : team)));
-  }
-
-  async function persistResolution(attackerChange: number, ownerChange: number, nextMessage: string) {
-    if (!room || !attacker || !owner || !ownerBoard || !selectedSquare) {
-      return;
-    }
-
-    if (attackerChange) {
-      await adjustTeamScore(room.id, attacker.id, attackerChange);
-      updateTeamInState(attacker.id, (team) => ({ ...team, score: team.score + attackerChange }));
-    }
-    if (ownerChange) {
-      await adjustTeamScore(room.id, owner.id, ownerChange);
-      updateTeamInState(owner.id, (team) => ({ ...team, score: team.score + ownerChange }));
-    }
-    if (useDouble) {
-      const updatedAttacker = { ...attacker, doubleAvailable: false };
-      await saveTeam(updatedAttacker);
-      updateTeamInState(attacker.id, () => updatedAttacker);
-    }
-
-    const nextSquares = ownerBoard.squares.map((square) =>
-      square.id === selectedSquare.id ? { ...square, revealed: true } : square,
-    );
-    const nextBoard = await saveBoard(room.id, owner.id, nextSquares, ownerBoard.locked);
-    setBoards((current) => [
-      ...current.filter((board) => board.teamId !== owner.id),
-      nextBoard,
-    ]);
-
-    const nextTeam = getNextTeamTurn(teams, attacker.id);
-    if (nextTeam) {
-      setAttackerTeamId(nextTeam.id);
-      setOwnerTeamId(teams.find((team) => team.id !== nextTeam.id)?.id ?? owner.id);
-    }
-
-    setPhase("attacker");
-    setUseDouble(false);
-    setSubmittedAnswer("");
-    setSelectedSquareId("");
-    setMessage(nextMessage);
-    await addGameEvent(room.id, "turn_resolved", nextMessage, {
-      attackerChange,
-      ownerChange,
-    });
-  }
-
-  async function validateAnswer(correct: boolean) {
-    if (!selectedSquare || !attacker || !owner) {
-      setMessage("اختر مربعًا أولًا.");
-      return;
-    }
-
-    if (phase === "attacker") {
-      const result = calculateScoreChange({
-        square: selectedSquare,
-        useDouble,
-        attackerCorrect: correct,
-      });
-
-      if (result.finalState === "transfer_to_owner") {
-        if (useDouble) {
-          const updatedAttacker = { ...attacker, doubleAvailable: false };
-          await saveTeam(updatedAttacker);
-          updateTeamInState(attacker.id, () => updatedAttacker);
-          setUseDouble(false);
-        }
-        setPhase("owner");
-        setSubmittedAnswer("");
-        setMessage(`انتقلت الإجابة إلى ${owner.name}.`);
-        return;
-      }
-
-      await persistResolution(result.attackerChange, result.ownerChange, result.message);
-      return;
-    }
-
-    const result = calculateScoreChange({
-      square: selectedSquare,
-      useDouble: false,
-      attackerCorrect: false,
-      ownerCorrect: correct,
-    });
-    await persistResolution(result.attackerChange, result.ownerChange, result.message);
-  }
-
   function changeOwner(teamId: string) {
     setOwnerTeamId(teamId);
     setSelectedSquareId("");
-    setPhase("attacker");
     setSubmittedAnswer("");
+  }
+
+  async function toggleDouble() {
+    if (!canUseDouble(role)) {
+      setMessage(unauthorizedMessage);
+      return;
+    }
+
+    if (!attacker?.doubleAvailable) {
+      setMessage("تم استخدام الدبل لهذا الفريق.");
+      return;
+    }
+
+    setUseDouble((current) => !current);
+  }
+
+  async function submitCaptainAnswer() {
+    if (!canSubmitAnswer(role)) {
+      setMessage(unauthorizedMessage);
+      return;
+    }
+
+    if (!room || !attacker || !owner || !selectedSquare) {
+      setMessage("اختر مربعًا قبل إرسال الإجابة.");
+      return;
+    }
+
+    const safeAnswer = sanitizeAnswer(submittedAnswer);
+    if (!safeAnswer) {
+      setMessage("اكتب الإجابة النهائية قبل الإرسال.");
+      return;
+    }
+
+    if (useDouble && attacker.doubleAvailable) {
+      const updatedAttacker = { ...attacker, doubleAvailable: false };
+      await saveTeam(updatedAttacker);
+      setTeams((current) => current.map((team) => (team.id === attacker.id ? updatedAttacker : team)));
+    }
+
+    await addGameEvent(room.id, "team_updated", `إجابة كابتن ${attacker.name}: ${safeAnswer}`, {
+      attackerTeamId: attacker.id,
+      ownerTeamId: owner.id,
+      squareId: selectedSquare.id,
+      useDouble,
+    });
+
+    setMessage("تم إرسال الإجابة للمشرف.");
+    setSubmittedAnswer("");
+    setUseDouble(false);
+  }
+
+  async function submitObjection() {
+    if (!canSubmitAnswer(role)) {
+      setMessage(unauthorizedMessage);
+      return;
+    }
+
+    if (!room || !attacker) {
+      return;
+    }
+
+    await saveObjection({
+      roomId: room.id,
+      teamId: attacker.id,
+      text: "اعتراض من الكابتن",
+    });
+    setMessage("تم إرسال الاعتراض للمنظم.");
   }
 
   return (
@@ -201,10 +188,11 @@ export function PlayBoard() {
       <section className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="grid gap-2">
-            <span className="text-sm font-bold text-slate-500">الفريق صاحب الدور</span>
+            <span className="text-sm font-bold text-slate-500">فريقك</span>
             <select
               className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-3 font-bold"
               value={attackerTeamId}
+              disabled={Boolean(captainTeamId)}
               onChange={(event) => setAttackerTeamId(event.target.value)}
             >
               {teams.map((team) => (
@@ -239,7 +227,7 @@ export function PlayBoard() {
               <button
                 key={square.id}
                 type="button"
-                disabled={square.revealed || phase === "owner"}
+                disabled={square.revealed}
                 onClick={() => setSelectedSquareId(square.id)}
                 className={`flex aspect-square flex-col items-center justify-center rounded-3xl p-2 text-center text-xl font-black transition ${
                   selected
@@ -289,13 +277,13 @@ export function PlayBoard() {
             </div>
             <button
               type="button"
-              disabled={!attacker?.doubleAvailable || phase === "owner"}
-              onClick={() => setUseDouble((current) => !current)}
+              disabled={!attacker?.doubleAvailable}
+              onClick={toggleDouble}
               className={`min-h-12 rounded-2xl px-4 text-sm font-black disabled:opacity-40 ${
                 useDouble ? "bg-rose-600 text-white" : "bg-slate-100 text-slate-700"
               }`}
             >
-              {useDouble ? "مفعلة" : "استخدم"}
+              {useDouble ? "مفعلة" : "تفعيل الدبل"}
             </button>
           </div>
         </section>
@@ -304,29 +292,30 @@ export function PlayBoard() {
           <p className="min-h-12 text-base font-bold leading-7 text-slate-700">{message}</p>
           <label className="mt-3 grid gap-2">
             <span className="text-sm font-bold text-slate-500">
-              إجابة {phase === "attacker" ? "الكابتن" : "صاحب اللوحة"}
+              إجابة الكابتن
             </span>
             <input
               className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-3 font-bold outline-none focus:border-teal-500"
               value={submittedAnswer}
-              onChange={(event) => setSubmittedAnswer(event.target.value)}
+              maxLength={200}
+              onChange={(event) => setSubmittedAnswer(sanitizeAnswer(event.target.value))}
               placeholder="اكتب الإجابة النهائية"
             />
           </label>
           <div className="mt-3 grid grid-cols-2 gap-2">
             <button
               type="button"
-              onClick={() => validateAnswer(true)}
-              className="min-h-14 rounded-2xl bg-teal-600 px-4 text-lg font-black text-white"
+              onClick={submitCaptainAnswer}
+              className="min-h-14 rounded-2xl bg-teal-600 px-4 text-base font-black text-white"
             >
-              صح
+              إرسال الإجابة
             </button>
             <button
               type="button"
-              onClick={() => validateAnswer(false)}
-              className="min-h-14 rounded-2xl bg-rose-600 px-4 text-lg font-black text-white"
+              onClick={submitObjection}
+              className="min-h-14 rounded-2xl bg-amber-400 px-4 text-base font-black text-slate-950"
             >
-              خطأ
+              اعتراض
             </button>
           </div>
         </section>

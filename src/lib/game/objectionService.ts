@@ -3,6 +3,7 @@
 import { collection, doc, getDocs, setDoc } from "firebase/firestore";
 import type { Objection, ObjectionStatus } from "@/types/game";
 import { getFirebaseDb } from "@/lib/firebase/firestore";
+import { sanitizeObjection } from "@/lib/security/inputSafety";
 import { addGameEvent } from "./eventService";
 import { createLocalId, readLocalState, updateLocalState } from "./localStore";
 
@@ -23,6 +24,7 @@ export async function getObjections(roomId: string) {
 export async function saveObjection(objection: Omit<Objection, "id" | "createdAt" | "status">) {
   const nextObjection: Objection = {
     ...objection,
+    text: sanitizeObjection(objection.text) || "اعتراض",
     id: createLocalId("objection"),
     status: "open",
     createdAt: Date.now(),

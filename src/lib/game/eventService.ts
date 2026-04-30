@@ -3,6 +3,7 @@
 import { addDoc, collection, getDocs, onSnapshot, orderBy, query } from "firebase/firestore";
 import type { GameEvent } from "@/types/game";
 import { getFirebaseDb } from "@/lib/firebase/firestore";
+import { sanitizeText } from "@/lib/security/inputSafety";
 import { createLocalId, readLocalState, updateLocalState } from "./localStore";
 
 export async function addGameEvent(
@@ -11,13 +12,21 @@ export async function addGameEvent(
   message: string,
   payload?: Record<string, unknown>,
 ) {
+  const safePayload = payload
+    ? Object.fromEntries(
+        Object.entries(payload).map(([key, value]) => [
+          key,
+          typeof value === "string" ? sanitizeText(value, 160) : value,
+        ]),
+      )
+    : undefined;
   const event: GameEvent = {
     id: createLocalId("event"),
     roomId,
     type,
-    message,
+    message: sanitizeText(message, 240) || "حدث جديد",
     createdAt: Date.now(),
-    payload,
+    payload: safePayload,
   };
 
   const db = getFirebaseDb();

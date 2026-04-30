@@ -3,6 +3,7 @@
 import { collection, doc, getDocs, onSnapshot, orderBy, query, setDoc } from "firebase/firestore";
 import type { Turn } from "@/types/game";
 import { getFirebaseDb } from "@/lib/firebase/firestore";
+import { sanitizeAnswer } from "@/lib/security/inputSafety";
 import { addGameEvent } from "./eventService";
 import { createLocalId, readLocalState, updateLocalState } from "./localStore";
 
@@ -29,7 +30,11 @@ export async function getCurrentTurn(roomId: string) {
 }
 
 export async function saveTurn(turn: Turn) {
-  const updatedTurn = { ...turn, updatedAt: Date.now() };
+  const updatedTurn = {
+    ...turn,
+    submittedAnswer: turn.submittedAnswer ? sanitizeAnswer(turn.submittedAnswer) : undefined,
+    updatedAt: Date.now(),
+  };
   const db = getFirebaseDb();
   if (db) {
     try {

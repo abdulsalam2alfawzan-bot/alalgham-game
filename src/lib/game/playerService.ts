@@ -1,31 +1,60 @@
 "use client";
 
-import { collection, doc, getDocs, onSnapshot, setDoc, updateDoc } from "firebase/firestore";
-import type { Player } from "@/types/game";
+import { collection, deleteField, doc, getDocs, onSnapshot, setDoc, updateDoc, writeBatch } from "firebase/firestore";
+import type { Player, Team } from "@/types/game";
+import {
+  getRoomByPlayerCode,
+  isPlayerCodeExpired,
+} from "@/lib/auth/roomAccess";
+import { savePlayerSession } from "@/lib/auth/sessionRole";
 import { signInAnonymouslyIfNeeded } from "@/lib/firebase/auth";
 import { getFirebaseDb } from "@/lib/firebase/firestore";
+import {
+  isValidPlayerCode,
+  sanitizeCode,
+  sanitizeName,
+} from "@/lib/security/inputSafety";
 import { addGameEvent } from "./eventService";
-import { createLocalId, readLocalState, rememberCurrentPlayer, updateLocalState } from "./localStore";
-import { getRoomByCode } from "./roomService";
+import { createLocalId, readLocalState, rememberPlayerSession, updateLocalState } from "./localStore";
+
+type StoredPlayer = Omit<Player, "role"> & Partial<Pick<Player, "role">>;
+
+function normalizePlayer(player: StoredPlayer): Player {
+  return { ...player, role: player.role ?? "player" };
+}
 
 export async function getPlayers(roomId: string) {
   const db = getFirebaseDb();
   if (db) {
     try {
       const snapshot = await getDocs(collection(db, "rooms", roomId, "players"));
-      return snapshot.docs.map((doc) => ({ ...(doc.data() as Player), id: doc.id }));
+      return snapshot.docs.map((doc) => normalizePlayer({ ...(doc.data() as StoredPlayer), id: doc.id }));
     } catch (error) {
       console.warn("Firebase players read failed; using local fallback.", error);
     }
   }
 
-  return readLocalState().players.filter((player) => player.roomId === roomId);
+  return readLocalState().players.filter((player) => player.roomId === roomId).map(normalizePlayer);
 }
 
-export async function joinRoom(roomCode: string, playerName: string) {
-  const room = await getRoomByCode(roomCode);
+export async function joinRoom(playerCode: string, playerName: string) {
+  const normalizedPlayerCode = sanitizeCode(playerCode);
+  if (!isValidPlayerCode(normalizedPlayerCode)) {
+    return { ok: false as const, message: "كود اللاعب غير صحيح" };
+  }
+
+  const room = await getRoomByPlayerCode(normalizedPlayerCode);
   if (!room) {
-    return { ok: false as const, message: "رمز الغرفة غير صحيح" };
+    return { ok: false as const, message: "كود اللاعب غير صحيح" };
+  }
+
+  if (isPlayerCodeExpired(room)) {
+    return { ok: false as const, message: "انتهت صلاحية كود اللاعب" };
+  }
+
+  const safePlayerName = sanitizeName(playerName);
+  if (!safePlayerName) {
+    return { ok: false as const, message: "يرجى إدخال قيمة صحيحة" };
   }
 
   const user = await signInAnonymouslyIfNeeded();
@@ -34,17 +63,26 @@ export async function joinRoom(roomCode: string, playerName: string) {
   const player: Player = {
     id: createLocalId("player"),
     roomId: room.id,
-    name: playerName.trim() || "لاعب",
+    name: safePlayerName,
     uid: user?.uid ?? createLocalId("local-user"),
+    role: "player",
     isCaptain: false,
     joinedAt: now,
+    status: "active",
   };
 
   if (db) {
     try {
       await setDoc(doc(db, "rooms", room.id, "players", player.id), player);
       await addGameEvent(room.id, "player_joined", `انضم ${player.name}`);
-      rememberCurrentPlayer(player.id);
+      rememberPlayerSession(player.id);
+      savePlayerSession({
+        roomId: room.id,
+        playerId: player.id,
+        playerCode: normalizedPlayerCode,
+        expiresAt: room.expiresAt,
+        role: "player",
+      });
       return { ok: true as const, room, player };
     } catch (error) {
       console.warn("Firebase join failed; using local fallback.", error);
@@ -55,6 +93,8 @@ export async function joinRoom(roomCode: string, playerName: string) {
     ...state,
     currentRoomId: room.id,
     currentPlayerId: player.id,
+    currentUserId: player.id,
+    sessionRole: "player",
     players: [...state.players, player],
     events: [
       {
@@ -67,6 +107,13 @@ export async function joinRoom(roomCode: string, playerName: string) {
       ...state.events,
     ],
   }));
+  savePlayerSession({
+    roomId: room.id,
+    playerId: player.id,
+    playerCode: normalizedPlayerCode,
+    expiresAt: room.expiresAt,
+    role: "player",
+  });
 
   return { ok: true as const, room, player };
 }
@@ -75,7 +122,25 @@ export async function assignPlayerToTeam(roomId: string, playerId: string, teamI
   const db = getFirebaseDb();
   if (db) {
     try {
-      await updateDoc(doc(db, "rooms", roomId, "players", playerId), { teamId });
+      const batch = writeBatch(db);
+      const playerRef = doc(db, "rooms", roomId, "players", playerId);
+      let demoteCaptain = false;
+      batch.update(playerRef, { teamId });
+      const teamsSnapshot = await getDocs(collection(db, "rooms", roomId, "teams"));
+      teamsSnapshot.docs.forEach((teamDoc) => {
+        const team = { ...(teamDoc.data() as Team), id: teamDoc.id };
+        if (team.id !== teamId && (team.captainId === playerId || team.captainPlayerId === playerId)) {
+          demoteCaptain = true;
+          batch.update(doc(db, "rooms", roomId, "teams", team.id), {
+            captainId: deleteField(),
+            captainPlayerId: deleteField(),
+          });
+        }
+      });
+      if (demoteCaptain) {
+        batch.update(playerRef, { role: "player", isCaptain: false });
+      }
+      await batch.commit();
       await addGameEvent(roomId, "team_updated", "تم نقل لاعب إلى فريق");
       return;
     } catch (error) {
@@ -83,10 +148,57 @@ export async function assignPlayerToTeam(roomId: string, playerId: string, teamI
     }
   }
 
+  updateLocalState((state) => {
+    const demoteCaptain = state.teams.some(
+      (team) =>
+        team.roomId === roomId &&
+        team.id !== teamId &&
+        (team.captainId === playerId || team.captainPlayerId === playerId),
+    );
+
+    return {
+      ...state,
+      teams: state.teams.map((team) =>
+        team.roomId === roomId &&
+        team.id !== teamId &&
+        (team.captainId === playerId || team.captainPlayerId === playerId)
+          ? { ...team, captainId: undefined, captainPlayerId: undefined }
+          : team,
+      ),
+      players: state.players.map((player) =>
+        player.id === playerId
+          ? {
+              ...player,
+              teamId,
+              role: demoteCaptain ? "player" : (player.role ?? "player"),
+              isCaptain: demoteCaptain ? false : player.isCaptain,
+            }
+          : player,
+      ),
+    };
+  });
+}
+
+export async function kickPlayer(roomId: string, playerId: string) {
+  const db = getFirebaseDb();
+  if (db) {
+    try {
+      await updateDoc(doc(db, "rooms", roomId, "players", playerId), {
+        status: "kicked",
+      });
+      await addGameEvent(roomId, "team_updated", "تم طرد لاعب");
+      return;
+    } catch (error) {
+      console.warn("Firebase player kick failed; using local fallback.", error);
+    }
+  }
+
   updateLocalState((state) => ({
     ...state,
     players: state.players.map((player) =>
-      player.id === playerId ? { ...player, teamId } : player,
+      player.roomId === roomId && player.id === playerId
+        ? { ...player, status: "kicked" }
+        : player,
     ),
   }));
 }
@@ -97,7 +209,7 @@ export function watchPlayers(roomId: string, callback: (players: Player[]) => vo
     return onSnapshot(
       collection(db, "rooms", roomId, "players"),
       (snapshot) => {
-        callback(snapshot.docs.map((doc) => ({ ...(doc.data() as Player), id: doc.id })));
+        callback(snapshot.docs.map((doc) => normalizePlayer({ ...(doc.data() as StoredPlayer), id: doc.id })));
       },
       () => {
         void getPlayers(roomId).then(callback);

@@ -2,10 +2,12 @@ export type ActivationCodeStatus = "unused" | "reserved" | "used" | "expired";
 export type GameStatus =
   | "draft"
   | "waiting"
+  | "team_assignment"
   | "board_setup"
   | "playing"
   | "paused"
-  | "finished";
+  | "finished"
+  | "expired";
 export type SquareKind = "points" | "mine";
 export type PointValue = 100 | 300 | 500 | 700;
 export type QuestionDifficulty = "easy" | "medium" | "hard" | "gold";
@@ -15,6 +17,8 @@ export type TurnPhase =
   | "owner_answer"
   | "resolved";
 export type ObjectionStatus = "open" | "accepted" | "rejected";
+export type EffectiveRole = "player" | "captain" | "organizer";
+export type PlayerRole = "player" | "captain";
 
 export type ActivationCode = {
   code: string;
@@ -28,13 +32,17 @@ export type ActivationCode = {
 };
 
 export type RoomSettings = {
+  teamsCount: number;
   teamCount: number;
   playersPerTeam: number;
   categories: string[];
   answerDurations: Record<PointValue, number>;
   doubleEnabled: boolean;
+  minePenalty: number;
   mineReflection: boolean;
+  mineReflectionEnabled: boolean;
   objectionsCount: number;
+  objectionsPerTeam: number;
   startingScore: number;
 };
 
@@ -43,7 +51,13 @@ export type Room = {
   name: string;
   roomCode: string;
   activationCode: string;
+  organizerId?: string;
   organizerUid: string;
+  supervisorCode: string;
+  supervisorCodeExpiresAt: number | string;
+  playerCode: string;
+  playerCodeExpiresAt: number | string;
+  expiresAt: number | string;
   status: GameStatus;
   settings: RoomSettings;
   createdAt: number;
@@ -58,6 +72,7 @@ export type Team = {
   color: string;
   score: number;
   order: number;
+  captainId?: string;
   captainPlayerId?: string;
   doubleAvailable: boolean;
   boardLocked: boolean;
@@ -69,8 +84,10 @@ export type Player = {
   name: string;
   uid?: string;
   teamId?: string;
+  role: PlayerRole;
   isCaptain: boolean;
   joinedAt: number;
+  status: "active" | "kicked" | "left";
 };
 
 export type BoardSquare = {

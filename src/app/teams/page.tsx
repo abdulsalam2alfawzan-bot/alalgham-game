@@ -3,8 +3,15 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ActionLink, PageShell, Panel } from "../_components/game-ui";
-import type { Player, Room, Team } from "@/types/game";
+import type { EffectiveRole, Player, Room, Team } from "@/types/game";
 import { getPlayers, assignPlayerToTeam } from "@/lib/game/playerService";
+import {
+  canAssignCaptain,
+  canStartGame,
+  getEffectiveRole,
+  unauthorizedMessage,
+} from "@/lib/game/permissions";
+import { readLocalState, type SessionRole } from "@/lib/game/localStore";
 import { getRoom, updateRoomStatus } from "@/lib/game/roomService";
 import { getTeams, saveTeam, setCaptain } from "@/lib/game/teamService";
 
@@ -13,17 +20,25 @@ export default function TeamsPage() {
   const [room, setRoom] = useState<Room | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
+  const [actorId, setActorId] = useState<string>();
+  const [sessionRole, setSessionRole] = useState<SessionRole>();
   const [message, setMessage] = useState("");
+  const [loaded, setLoaded] = useState(false);
 
   async function loadTeamsPage() {
+    const state = readLocalState();
     const activeRoom = await getRoom();
     if (!activeRoom) {
+      setLoaded(true);
       return;
     }
 
+    setActorId(state.currentUserId ?? state.currentPlayerId);
+    setSessionRole(state.sessionRole);
     setRoom(activeRoom);
     setTeams(await getTeams(activeRoom.id));
     setPlayers(await getPlayers(activeRoom.id));
+    setLoaded(true);
   }
 
   useEffect(() => {
@@ -34,13 +49,27 @@ export default function TeamsPage() {
     return () => window.clearTimeout(timer);
   }, []);
 
+  const effectiveRole: EffectiveRole = room
+    ? getEffectiveRole(actorId, room, teams, sessionRole)
+    : "player";
+
   async function updateTeamName(team: Team, name: string) {
+    if (!canAssignCaptain(effectiveRole)) {
+      setMessage(unauthorizedMessage);
+      return;
+    }
+
     await saveTeam({ ...team, name });
     await loadTeamsPage();
   }
 
   async function movePlayer(playerId: string, teamId: string) {
     if (!room) {
+      return;
+    }
+
+    if (!canAssignCaptain(effectiveRole)) {
+      setMessage(unauthorizedMessage);
       return;
     }
 
@@ -53,6 +82,11 @@ export default function TeamsPage() {
       return;
     }
 
+    if (!canAssignCaptain(effectiveRole)) {
+      setMessage(unauthorizedMessage);
+      return;
+    }
+
     await setCaptain(room.id, teamId, playerId);
     await loadTeamsPage();
   }
@@ -62,14 +96,56 @@ export default function TeamsPage() {
       return;
     }
 
-    const missingCaptain = teams.some((team) => !team.captainPlayerId);
+    if (!canStartGame(effectiveRole)) {
+      setMessage(unauthorizedMessage);
+      return;
+    }
+
+    const missingCaptain = teams.some((team) => !(team.captainId ?? team.captainPlayerId));
     if (missingCaptain) {
       setMessage("يجب تعيين كابتن لكل فريق قبل تجهيز اللوحات.");
       return;
     }
 
     await updateRoomStatus(room.id, "board_setup");
-    router.push("/captain-board");
+    router.push("/waiting-room");
+  }
+
+  if (!loaded) {
+    return (
+      <PageShell
+        eyebrow="الفرق"
+        title="توزيع الفرق"
+        description="جاري تحميل صلاحيات الغرفة."
+      >
+        <Panel>
+          <p className="rounded-2xl bg-slate-50 px-4 py-3 text-sm font-bold text-slate-600">
+            جاري التحميل...
+          </p>
+        </Panel>
+      </PageShell>
+    );
+  }
+
+  if (effectiveRole !== "organizer") {
+    return (
+      <PageShell
+        eyebrow="الفرق"
+        title="توزيع الفرق"
+        description="إدارة الفرق مخصصة للمنظم فقط."
+      >
+        <Panel title="صلاحية غير متاحة">
+          <div className="grid gap-4">
+            <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm font-bold leading-6 text-rose-800 ring-1 ring-rose-100">
+              هذه الصفحة مخصصة للمنظم فقط
+            </p>
+            <ActionLink href="/waiting-room" variant="light">
+              العودة لغرفة الانتظار
+            </ActionLink>
+          </div>
+        </Panel>
+      </PageShell>
+    );
   }
 
   return (
@@ -77,6 +153,7 @@ export default function TeamsPage() {
       eyebrow="الفرق"
       title="توزيع الفرق"
       description="عدّل أسماء الفرق، انقل اللاعبين، وحدد كابتن لكل فريق."
+      showOrganizerLink
     >
       {message ? (
         <p className="rounded-2xl bg-amber-50 px-4 py-3 text-sm font-bold leading-6 text-amber-900 ring-1 ring-amber-100">
@@ -87,6 +164,7 @@ export default function TeamsPage() {
       <Panel title="الفرق والكباتن">
         <div className="grid gap-4">
           {teams.map((team) => {
+            const captainId = team.captainId ?? team.captainPlayerId;
             const teamPlayers = players.filter((player) => player.teamId === team.id);
             return (
               <article key={team.id} className="grid gap-3 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
@@ -121,7 +199,7 @@ export default function TeamsPage() {
                         type="button"
                         onClick={() => chooseCaptain(team.id, player.id)}
                         className={`min-h-10 rounded-xl px-3 font-black ${
-                          team.captainPlayerId === player.id
+                          captainId === player.id
                             ? "bg-amber-400 text-slate-950"
                             : "bg-white text-slate-700"
                         }`}
@@ -147,7 +225,10 @@ export default function TeamsPage() {
           {players
             .filter((player) => !player.teamId)
             .map((player) => (
-              <div key={player.id} className="grid gap-2 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-200 sm:grid-cols-[1fr_12rem]">
+              <div
+                key={player.id}
+                className="grid gap-2 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-200 sm:grid-cols-[1fr_12rem]"
+              >
                 <span className="font-bold text-slate-700">{player.name}</span>
                 <select
                   className="min-h-10 rounded-xl border border-slate-200 bg-slate-50 px-2 font-bold"
