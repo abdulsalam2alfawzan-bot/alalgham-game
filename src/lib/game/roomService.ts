@@ -12,6 +12,18 @@ import { buildPlayerQrPath, buildPlayerQrUrl } from "@/lib/qr/roomQrLinks";
 import { readLocalState, updateLocalState } from "./localStore";
 import { addGameEvent } from "./eventService";
 
+export function deriveRoomNumber(roomId: string | undefined) {
+  return roomId?.replace(/\D/g, "").slice(-4) || "0000";
+}
+
+export function normalizeRoom(room: Room): Room {
+  return {
+    ...room,
+    roomNumber: room.roomNumber || deriveRoomNumber(room.id),
+    isJoinLocked: room.isJoinLocked ?? false,
+  };
+}
+
 export function buildJoinPath(playerCode: string) {
   return buildPlayerQrPath(playerCode);
 }
@@ -32,14 +44,15 @@ export async function getRoom(roomId?: string) {
     try {
       const snapshot = await getDoc(doc(db, "rooms", id));
       if (snapshot.exists()) {
-        return { ...(snapshot.data() as Room), id: snapshot.id };
+        return normalizeRoom({ ...(snapshot.data() as Room), id: snapshot.id });
       }
     } catch (error) {
       console.warn("Firebase room read failed; using local fallback.", error);
     }
   }
 
-  return state.rooms.find((room) => room.id === id) ?? state.rooms[0];
+  const room = state.rooms.find((room) => room.id === id) ?? state.rooms[0];
+  return room ? normalizeRoom(room) : undefined;
 }
 
 export async function updateRoomStatus(roomId: string, status: Room["status"]) {
@@ -69,7 +82,7 @@ export function watchRoom(roomId: string, callback: (room: Room | undefined) => 
     return onSnapshot(
       doc(db, "rooms", roomId),
       (snapshot) => {
-        callback(snapshot.exists() ? ({ ...(snapshot.data() as Room), id: snapshot.id }) : undefined);
+        callback(snapshot.exists() ? normalizeRoom({ ...(snapshot.data() as Room), id: snapshot.id }) : undefined);
       },
       () => {
         void getRoom(roomId).then(callback);

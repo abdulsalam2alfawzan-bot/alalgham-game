@@ -1,9 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { Board, EffectiveRole, Question, Room, Team } from "@/types/game";
-import { readRoomSession } from "@/lib/auth/sessionRole";
-import { getBoards } from "@/lib/game/boardService";
+import type { EffectiveRole } from "@/types/game";
 import { addGameEvent } from "@/lib/game/eventService";
 import { createDefaultBoardSquares } from "@/lib/game/mockData";
 import {
@@ -12,22 +10,20 @@ import {
   unauthorizedMessage,
 } from "@/lib/game/permissions";
 import { saveObjection } from "@/lib/game/objectionService";
-import { getQuestions } from "@/lib/game/questionService";
-import { getRoom } from "@/lib/game/roomService";
-import { getTeams, saveTeam } from "@/lib/game/teamService";
+import type { LiveRoomState } from "@/lib/game/roomState";
+import { saveTeam } from "@/lib/game/teamService";
+import { createTurn, saveTurn } from "@/lib/game/turnService";
 import { selectQuestionForSquare } from "@/lib/game/questionSelection";
 import { sanitizeAnswer } from "@/lib/security/inputSafety";
 
 type PlayBoardProps = {
   role: EffectiveRole;
   captainTeamId?: string;
+  roomState: LiveRoomState;
 };
 
-export function PlayBoard({ role, captainTeamId }: PlayBoardProps) {
-  const [room, setRoom] = useState<Room | null>(null);
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [boards, setBoards] = useState<Board[]>([]);
-  const [questions, setQuestions] = useState<Question[]>([]);
+export function PlayBoard({ role, captainTeamId, roomState }: PlayBoardProps) {
+  const { room, teams, boards, questions, currentTurn, refresh } = roomState;
   const [attackerTeamId, setAttackerTeamId] = useState("");
   const [ownerTeamId, setOwnerTeamId] = useState("");
   const [selectedSquareId, setSelectedSquareId] = useState("");
@@ -37,33 +33,33 @@ export function PlayBoard({ role, captainTeamId }: PlayBoardProps) {
   const [secondsLeft, setSecondsLeft] = useState(30);
 
   useEffect(() => {
-    async function loadPlayData() {
-      const session = readRoomSession();
-      const activeRoom = await getRoom(session?.roomId);
-      if (!activeRoom) {
-        return;
-      }
-
-      const roomTeams = await getTeams(activeRoom.id);
-      const roomBoards = await getBoards(activeRoom.id);
-      const roomQuestions = await getQuestions();
-      const attackerId = captainTeamId ?? activeRoom.currentTurnTeamId ?? roomTeams[0]?.id ?? "";
-      const ownerId = roomTeams.find((team) => team.id !== attackerId)?.id ?? "";
-
-      setRoom(activeRoom);
-      setTeams(roomTeams);
-      setBoards(roomBoards);
-      setQuestions(roomQuestions);
-      setAttackerTeamId(attackerId);
-      setOwnerTeamId(ownerId);
-    }
-
+    const attackerId = room?.currentTurnTeamId ?? captainTeamId ?? teams[0]?.id ?? "";
+    const ownerId = teams.find((team) => team.id !== attackerId)?.id ?? "";
     const timer = window.setTimeout(() => {
-      void loadPlayData();
+      setAttackerTeamId((current) => current || attackerId);
+      setOwnerTeamId((current) => current || ownerId);
     }, 0);
 
     return () => window.clearTimeout(timer);
-  }, [captainTeamId]);
+  }, [captainTeamId, room?.currentTurnTeamId, teams]);
+
+  useEffect(() => {
+    if (!currentTurn) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setAttackerTeamId(currentTurn.attackerTeamId);
+      setOwnerTeamId(currentTurn.ownerTeamId ?? "");
+      setSelectedSquareId(currentTurn.selectedSquareId ?? "");
+      setUseDouble(currentTurn.useDouble);
+      if (currentTurn.submittedAnswer) {
+        setMessage("تم إرسال الإجابة بانتظار قرار المشرف");
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [currentTurn]);
 
   const attacker = teams.find((team) => team.id === attackerTeamId);
   const owner = teams.find((team) => team.id === ownerTeamId);
@@ -87,7 +83,13 @@ export function PlayBoard({ role, captainTeamId }: PlayBoardProps) {
   const selectedSquare = ownerBoard?.squares.find((square) => square.id === selectedSquareId);
   const currentQuestion = selectedSquare
     ? selectQuestionForSquare(selectedSquare, questions)
-    : questions[0];
+    : questions.find((question) => question.id === currentTurn?.questionId) ?? questions[0];
+  const isCaptainTurn =
+    room?.status === "playing" &&
+    role === "captain" &&
+    Boolean(captainTeamId) &&
+    attackerTeamId === captainTeamId &&
+    !currentTurn?.submittedAnswer;
 
   useEffect(() => {
     if (!currentQuestion || !room) {
@@ -127,6 +129,15 @@ export function PlayBoard({ role, captainTeamId }: PlayBoardProps) {
       return;
     }
 
+    if (!isCaptainTurn) {
+      setMessage("يمكن تفعيل الدبل فقط أثناء دور فريقك وقبل إرسال الإجابة.");
+      return;
+    }
+
+    if (!window.confirm("هل تريد تفعيل الدبل؟ لا يمكن التراجع بعد التفعيل.")) {
+      return;
+    }
+
     setUseDouble((current) => !current);
   }
 
@@ -141,6 +152,11 @@ export function PlayBoard({ role, captainTeamId }: PlayBoardProps) {
       return;
     }
 
+    if (!isCaptainTurn) {
+      setMessage("لا يمكن إرسال الإجابة الآن.");
+      return;
+    }
+
     const safeAnswer = sanitizeAnswer(submittedAnswer);
     if (!safeAnswer) {
       setMessage("اكتب الإجابة النهائية قبل الإرسال.");
@@ -150,8 +166,25 @@ export function PlayBoard({ role, captainTeamId }: PlayBoardProps) {
     if (useDouble && attacker.doubleAvailable) {
       const updatedAttacker = { ...attacker, doubleAvailable: false };
       await saveTeam(updatedAttacker);
-      setTeams((current) => current.map((team) => (team.id === attacker.id ? updatedAttacker : team)));
+      await refresh();
     }
+
+    const baseTurn =
+      currentTurn && currentTurn.roomId === room.id
+        ? currentTurn
+        : await createTurn(room.id, attacker.id, 1);
+
+    await saveTurn({
+      ...baseTurn,
+      attackerTeamId: attacker.id,
+      ownerTeamId: owner.id,
+      selectedSquareId: selectedSquare.id,
+      questionId: currentQuestion?.id,
+      useDouble,
+      phase: "attacker_answer",
+      submittedAnswer: safeAnswer,
+      updatedAt: Date.now(),
+    });
 
     await addGameEvent(room.id, "team_updated", `إجابة كابتن ${attacker.name}: ${safeAnswer}`, {
       attackerTeamId: attacker.id,
@@ -163,6 +196,7 @@ export function PlayBoard({ role, captainTeamId }: PlayBoardProps) {
     setMessage("تم إرسال الإجابة للمشرف.");
     setSubmittedAnswer("");
     setUseDouble(false);
+    await refresh();
   }
 
   async function submitObjection() {
@@ -175,12 +209,18 @@ export function PlayBoard({ role, captainTeamId }: PlayBoardProps) {
       return;
     }
 
+    if (room.status !== "playing") {
+      setMessage("لا يمكن الاعتراض إلا أثناء اللعب.");
+      return;
+    }
+
     await saveObjection({
       roomId: room.id,
       teamId: attacker.id,
       text: "اعتراض من الكابتن",
     });
     setMessage("تم إرسال الاعتراض للمنظم.");
+    await refresh();
   }
 
   return (
@@ -227,7 +267,7 @@ export function PlayBoard({ role, captainTeamId }: PlayBoardProps) {
               <button
                 key={square.id}
                 type="button"
-                disabled={square.revealed}
+                disabled={square.revealed || !isCaptainTurn}
                 onClick={() => setSelectedSquareId(square.id)}
                 className={`flex aspect-square flex-col items-center justify-center rounded-3xl p-2 text-center text-xl font-black transition ${
                   selected
@@ -277,7 +317,7 @@ export function PlayBoard({ role, captainTeamId }: PlayBoardProps) {
             </div>
             <button
               type="button"
-              disabled={!attacker?.doubleAvailable}
+              disabled={!attacker?.doubleAvailable || !isCaptainTurn}
               onClick={toggleDouble}
               className={`min-h-12 rounded-2xl px-4 text-sm font-black disabled:opacity-40 ${
                 useDouble ? "bg-rose-600 text-white" : "bg-slate-100 text-slate-700"
@@ -297,6 +337,7 @@ export function PlayBoard({ role, captainTeamId }: PlayBoardProps) {
             <input
               className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-3 font-bold outline-none focus:border-teal-500"
               value={submittedAnswer}
+              disabled={!isCaptainTurn}
               maxLength={200}
               onChange={(event) => setSubmittedAnswer(sanitizeAnswer(event.target.value))}
               placeholder="اكتب الإجابة النهائية"
@@ -306,14 +347,16 @@ export function PlayBoard({ role, captainTeamId }: PlayBoardProps) {
             <button
               type="button"
               onClick={submitCaptainAnswer}
-              className="min-h-14 rounded-2xl bg-teal-600 px-4 text-base font-black text-white"
+              disabled={!isCaptainTurn}
+              className="min-h-14 rounded-2xl bg-teal-600 px-4 text-base font-black text-white disabled:opacity-40"
             >
               إرسال الإجابة
             </button>
             <button
               type="button"
               onClick={submitObjection}
-              className="min-h-14 rounded-2xl bg-amber-400 px-4 text-base font-black text-slate-950"
+              disabled={room?.status !== "playing"}
+              className="min-h-14 rounded-2xl bg-amber-400 px-4 text-base font-black text-slate-950 disabled:opacity-40"
             >
               اعتراض
             </button>

@@ -10,10 +10,10 @@ export default function Home() {
       showOrganizerLink={false}
     >
       <section className="grid gap-3 sm:grid-cols-2">
-        <ActionLink href="/owner" variant="secondary">
+        <ActionLink href="/owner" variant="owner">
           دخول مالك الغرفة
         </ActionLink>
-        <ActionLink href="/join" variant="light">
+        <ActionLink href="/join" variant="player">
           دخول لاعب
         </ActionLink>
       </section>
@@ -22,10 +22,12 @@ export default function Home() {
         نسخة تجريبية — البيانات محلية أو سحابية حسب الإعداد.
       </p>
 
-      <section className="grid gap-2 rounded-3xl bg-white p-4 text-sm font-bold leading-6 text-slate-600 shadow-sm ring-1 ring-slate-200">
-        <p>من 2 إلى 4 فرق</p>
-        <p>كل فريق يبدأ بـ 1000 نقطة</p>
-        <p>خطأ اللغم يخصم 500</p>
+      <section className="grid gap-3 sm:grid-cols-3">
+        {["من 2 إلى 4 فرق", "كل فريق يبدأ بـ 1000 نقطة", "خطأ اللغم يخصم 500"].map((rule) => (
+          <p key={rule} className="rounded-3xl bg-white p-4 text-sm font-black leading-6 text-slate-700 shadow-sm ring-1 ring-slate-200">
+            {rule}
+          </p>
+        ))}
       </section>
     </PageShell>
   );

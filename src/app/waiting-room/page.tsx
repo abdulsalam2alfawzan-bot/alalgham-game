@@ -1,66 +1,31 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { ActionLink, InfoGrid, PageShell, Panel, RoomBadge } from "../_components/game-ui";
-import type { EffectiveRole, Player, Room, Team } from "@/types/game";
-import { getSessionPlayerId, readRoomSession } from "@/lib/auth/sessionRole";
+import type { EffectiveRole } from "@/types/game";
+import { readRoomSession } from "@/lib/auth/sessionRole";
 import { getEffectiveRole } from "@/lib/game/permissions";
-import { getPlayers } from "@/lib/game/playerService";
-import { getRoom } from "@/lib/game/roomService";
-import { getTeams } from "@/lib/game/teamService";
+import { useRoomState } from "@/lib/game/roomState";
 
 export default function WaitingRoomPage() {
-  const [room, setRoom] = useState<Room | null>(null);
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [actorId, setActorId] = useState<string>();
-  const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    async function loadWaitingRoom() {
-      const session = readRoomSession();
-      const params = new URLSearchParams(window.location.search);
-      const roomId = params.get("room") ?? session?.roomId;
-      const activeRoom = await getRoom(roomId ?? undefined);
-      if (!activeRoom) {
-        setLoaded(true);
-        return;
-      }
-
-      const roomTeams = await getTeams(activeRoom.id);
-      const roomPlayers = await getPlayers(activeRoom.id);
-      const playerId = getSessionPlayerId(session);
-      const player = roomPlayers.find((item) => item.id === playerId);
-
-      setActorId(player?.id);
-      setRoom(activeRoom);
-      setTeams(roomTeams);
-      setPlayers(roomPlayers);
-      setLoaded(true);
-    }
-
-    const timer = window.setTimeout(() => {
-      void loadWaitingRoom();
-    }, 0);
-    const interval = window.setInterval(() => {
-      void loadWaitingRoom();
-    }, 2500);
-
-    return () => {
-      window.clearTimeout(timer);
-      window.clearInterval(interval);
-    };
-  }, []);
-
   const session = readRoomSession();
+  const state = useRoomState(session?.roomId);
+  const { room, teams, players, actorId, loading, syncing } = state;
   const currentPlayer = players.find((player) => player.id === actorId);
   const effectiveRole: EffectiveRole = getEffectiveRole(actorId, room, session, teams, currentPlayer);
   const currentTeam = teams.find((team) => team.id === currentPlayer?.teamId);
   const currentTeamMembers = currentTeam
     ? players.filter((player) => player.teamId === currentTeam.id && player.status !== "kicked")
     : [];
+  const statusMessage =
+    room?.status === "finished"
+      ? "انتهت اللعبة"
+      : room?.status === "locked"
+        ? "تم قفل الغرفة من المشرف"
+        : room?.status === "expired"
+          ? "انتهت صلاحية الغرفة"
+          : "بانتظار المشرف لتعيين الكابتن وبدء اللعبة";
 
-  if (!loaded) {
+  if (loading) {
     return (
       <PageShell
         eyebrow="انتظار اللاعبين"
@@ -104,11 +69,17 @@ export default function WaitingRoomPage() {
       title="غرفة الانتظار"
       description="تابع حالة انضمامك وانتظر توزيع الفرق من المشرف."
     >
-      <RoomBadge code={room?.playerCode ?? "----"} />
+      <RoomBadge code={room?.roomNumber ?? "----"} label="رقم الغرفة" />
+      {syncing ? (
+        <p className="rounded-2xl bg-teal-50 px-4 py-3 text-sm font-bold text-teal-900">
+          جاري التحديث...
+        </p>
+      ) : null}
 
       <InfoGrid
         items={[
           { label: "الغرفة", value: room?.name ?? "..." },
+          { label: "رقم الغرفة", value: room?.roomNumber ?? "..." },
           { label: "الحالة", value: room?.status ?? "..." },
           { label: "اللاعب", value: currentPlayer?.name ?? "..." },
           { label: "الفريق المختار", value: currentTeam?.name ?? "لم يتم اختيار فريق بعد" },
@@ -136,8 +107,13 @@ export default function WaitingRoomPage() {
             </div>
           ) : null}
           <p className="rounded-2xl bg-slate-50 px-4 py-3 text-sm font-bold leading-6 text-slate-600">
-            بانتظار المشرف لتعيين الكابتن وبدء اللعبة
+            {statusMessage}
           </p>
+          {room?.status === "finished" ? (
+            <ActionLink href={`/results?room=${room.id}`} variant="secondary">
+              عرض النتائج
+            </ActionLink>
+          ) : null}
         </div>
       </Panel>
 

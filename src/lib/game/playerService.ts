@@ -54,6 +54,18 @@ export async function joinRoom(playerCode: string, playerName: string, teamId: s
     return { ok: false as const, message: "كود اللاعبين غير صحيح أو منتهي" };
   }
 
+  if (room.status === "locked") {
+    return { ok: false as const, message: "الغرفة مقفلة" };
+  }
+
+  if (room.isJoinLocked) {
+    return { ok: false as const, message: "تم قفل دخول اللاعبين لهذه الغرفة" };
+  }
+
+  if (room.status === "finished") {
+    return { ok: false as const, message: "انتهت اللعبة" };
+  }
+
   const safePlayerName = sanitizeName(playerName);
   if (!safePlayerName) {
     return { ok: false as const, message: "يرجى إدخال قيمة صحيحة" };

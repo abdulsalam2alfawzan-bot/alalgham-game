@@ -9,6 +9,7 @@ import {
   sanitizeCode,
 } from "@/lib/security/inputSafety";
 import { readLocalState } from "@/lib/game/localStore";
+import { normalizeRoom } from "@/lib/game/roomService";
 
 export function isCodeExpired(expiresAt: number | string | undefined) {
   if (!expiresAt) {
@@ -30,14 +31,15 @@ async function findRoomByCode(field: "ownerCode" | "playerCode", code: string) {
       );
       const firstRoom = snapshot.docs[0];
       if (firstRoom) {
-        return { ...(firstRoom.data() as Room), id: firstRoom.id };
+        return normalizeRoom({ ...(firstRoom.data() as Room), id: firstRoom.id });
       }
     } catch (error) {
       console.warn("Firebase room access lookup failed; using local fallback.", error);
     }
   }
 
-  return readLocalState().rooms.find((room) => room[field] === normalizedCode) ?? null;
+  const room = readLocalState().rooms.find((room) => room[field] === normalizedCode);
+  return room ? normalizeRoom(room) : null;
 }
 
 export function isRoomExpired(room: Room | null | undefined) {

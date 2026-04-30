@@ -1,47 +1,43 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { ActionLink, PageShell, Panel } from "../_components/game-ui";
-import type { GameEvent, Team } from "@/types/game";
-import { getRoomEvents } from "@/lib/game/eventService";
-import { getRoom } from "@/lib/game/roomService";
-import { getTeams } from "@/lib/game/teamService";
+import { useRoomState } from "@/lib/game/roomState";
 
 export default function ResultsPage() {
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [events, setEvents] = useState<GameEvent[]>([]);
-
-  useEffect(() => {
-    async function loadResults() {
-      const room = await getRoom();
-      if (!room) {
-        return;
-      }
-
-      setTeams(await getTeams(room.id));
-      setEvents(await getRoomEvents(room.id));
-    }
-
-    void loadResults();
-  }, []);
+  const { room, teams, events, syncing } = useRoomState();
 
   const finalScores = useMemo(
-    () => [...teams].sort((left, right) => right.score - left.score),
-    [teams],
+    () =>
+      room?.results?.ranking?.length
+        ? room.results.ranking.map((entry) => ({
+            id: entry.teamId,
+            name: entry.teamName,
+            score: entry.score,
+          }))
+        : [...teams].sort((left, right) => right.score - left.score),
+    [room, teams],
   );
   const winner = finalScores[0];
-  const minesExploded = events.filter((event) => event.message.includes("انفجر")).length;
-  const minesDefused = events.filter((event) => event.message.includes("تفكيك")).length;
-  const doubleUsage = events.filter((event) => event.message.includes("دبل") || event.message.includes("double")).length;
-  const objections = events.filter((event) => event.type === "objection");
+  const savedStats = room?.results?.stats;
+  const minesExploded = savedStats?.minesExploded ?? events.filter((event) => event.message.includes("انفجر")).length;
+  const minesDefused = savedStats?.minesDefused ?? events.filter((event) => event.message.includes("تفكيك")).length;
+  const doubleUsage = savedStats?.doubleUsed ?? events.filter((event) => event.message.includes("دبل") || event.message.includes("double")).length;
+  const objectionsCount = savedStats?.objectionsUsed ?? events.filter((event) => event.type === "objection").length;
+  const answersCount = (savedStats?.correctAnswers ?? 0) + (savedStats?.wrongAnswers ?? 0);
   const scoreEvents = events.filter((event) => event.type === "score_adjusted" || event.type === "turn_resolved");
 
   return (
     <PageShell
       eyebrow="النهاية"
       title="النتائج"
-      description="الفريق الأعلى نقاطًا هو الفائز."
+      description={`الفريق الأعلى نقاطًا هو الفائز. ${room?.roomNumber ? `رقم الغرفة ${room.roomNumber}` : ""}`}
     >
+      {syncing ? (
+        <p className="rounded-2xl bg-teal-50 px-4 py-3 text-sm font-bold text-teal-900">
+          جاري التحديث...
+        </p>
+      ) : null}
       <section className="rounded-3xl bg-slate-950 p-6 text-white shadow-sm">
         <p className="text-sm font-bold text-teal-200">الفائز</p>
         <h2 className="mt-2 text-4xl font-black">{winner?.name ?? "..."}</h2>
@@ -69,11 +65,11 @@ export default function ResultsPage() {
       <Panel title="إحصائيات اللعبة">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[
-            { label: "إجابات صحيحة/خاطئة", value: `${scoreEvents.length}` },
+            { label: "إجابات صحيحة/خاطئة", value: `${answersCount || scoreEvents.length}` },
             { label: "ألغام انفجرت", value: `${minesExploded}` },
             { label: "ألغام مفككة", value: `${minesDefused}` },
             { label: "استخدام الدبل", value: `${doubleUsage}` },
-            { label: "الاعتراضات", value: `${objections.length}` },
+            { label: "الاعتراضات", value: `${objectionsCount}` },
             { label: "أحداث السجل", value: `${events.length}` },
           ].map((item) => (
             <div key={item.label} className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">

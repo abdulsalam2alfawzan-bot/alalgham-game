@@ -8,7 +8,7 @@ import type { Team } from "@/types/game";
 import { validatePlayerCode } from "@/lib/auth/roomAccess";
 import { activeTeamDefinitions, futureTeamDefinitions, isActiveTeamId } from "@/lib/game/constants";
 import { joinRoom } from "@/lib/game/playerService";
-import { getTeams } from "@/lib/game/teamService";
+import { useRoomState } from "@/lib/game/roomState";
 import {
   inputErrorMessages,
   isSafeText,
@@ -23,11 +23,13 @@ export default function JoinPage() {
   const [playerCode, setPlayerCode] = useState("");
   const [playerName, setPlayerName] = useState("");
   const [availableTeams, setAvailableTeams] = useState<Team[]>([]);
+  const [joinRoomId, setJoinRoomId] = useState<string>();
   const [selectedTeamId, setSelectedTeamId] = useState("");
   const [message, setMessage] = useState("");
   const [qrMessage, setQrMessage] = useState("");
   const [scannerOpen, setScannerOpen] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
+  const liveRoom = useRoomState(joinRoomId);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -51,6 +53,7 @@ export default function JoinPage() {
       const safeCode = sanitizeCode(playerCode);
       if (!isValidPlayerCode(safeCode)) {
         setAvailableTeams([]);
+        setJoinRoomId(undefined);
         setSelectedTeamId("");
         return;
       }
@@ -59,14 +62,14 @@ export default function JoinPage() {
       if (!room) {
         if (!cancelled) {
           setAvailableTeams([]);
+          setJoinRoomId(undefined);
           setSelectedTeamId("");
         }
         return;
       }
 
-      const teams = await getTeams(room.id);
       if (!cancelled) {
-        setAvailableTeams(teams.filter((team) => isActiveTeamId(team.id)));
+        setJoinRoomId(room.id);
       }
     }
 
@@ -75,6 +78,16 @@ export default function JoinPage() {
       cancelled = true;
     };
   }, [playerCode]);
+
+  useEffect(() => {
+    if (joinRoomId) {
+      const timer = window.setTimeout(() => {
+        setAvailableTeams(liveRoom.teams.filter((team) => isActiveTeamId(team.id)));
+      }, 0);
+
+      return () => window.clearTimeout(timer);
+    }
+  }, [joinRoomId, liveRoom.teams]);
 
   async function handleJoin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

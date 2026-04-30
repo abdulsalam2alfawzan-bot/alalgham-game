@@ -60,6 +60,7 @@ export const sampleQuestions: Question[] = [
 export const mockRooms: Room[] = [
   {
     id: "room-4821",
+    roomNumber: "4821",
     name: "غرفة الألغام التجريبية",
     ownerCode: "M-4821-93",
     ownerCodeExpiresAt: now + twelveHours,
@@ -74,6 +75,7 @@ export const mockRooms: Room[] = [
   },
   {
     id: "room-2026",
+    roomNumber: "2026",
     name: "غرفة تحدي العائلة",
     ownerCode: "M-2026-55",
     ownerCodeExpiresAt: now + twelveHours,

@@ -5,6 +5,7 @@ export type GameStatus =
   | "playing"
   | "paused"
   | "finished"
+  | "locked"
   | "expired";
 export type SquareKind = "points" | "mine";
 export type PointValue = 100 | 300 | 500 | 700;
@@ -32,6 +33,7 @@ export type RoomSettings = {
 
 export type Room = {
   id: string;
+  roomNumber: string;
   name: string;
   ownerCode: string;
   ownerCodeExpiresAt: number | string;
@@ -39,10 +41,33 @@ export type Room = {
   playerCodeExpiresAt: number | string;
   expiresAt: number | string;
   status: GameStatus;
+  isJoinLocked?: boolean;
   settings: RoomSettings;
   createdAt: number | string;
   updatedAt?: number | string;
+  finishedAt?: number | string;
   currentTurnTeamId?: string;
+  results?: GameResultsSnapshot;
+};
+
+export type GameResultsSnapshot = {
+  finishedAt: number | string;
+  winnerTeamId?: string;
+  ranking: Array<{
+    teamId: string;
+    teamName: string;
+    score: number;
+    rank: number;
+  }>;
+  finalScores: Record<string, number>;
+  stats: {
+    correctAnswers: number;
+    wrongAnswers: number;
+    minesExploded: number;
+    minesDefused: number;
+    doubleUsed: number;
+    objectionsUsed: number;
+  };
 };
 
 export type Team = {
@@ -127,6 +152,7 @@ export type GameEvent = {
     | "turn_resolved"
     | "score_adjusted"
     | "objection"
+    | "game_state"
     | "game_finished";
   message: string;
   createdAt: number;

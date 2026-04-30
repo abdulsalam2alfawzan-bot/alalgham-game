@@ -54,6 +54,7 @@ type LegacyRoom = Partial<Room> & {
 };
 
 const localStateKey = "alalgham.mvp.state";
+export const localRoomUpdatesChannelName = "alalgham-room-updates";
 const twelveHours = 12 * 60 * 60 * 1000;
 const sixHours = 6 * 60 * 60 * 1000;
 const legacyDefaultTeamNames = ["الصقور", "النخيل", "النجوم", "الموج"];
@@ -96,6 +97,7 @@ function migrateRoom(room: LegacyRoom, index: number): Room {
 
   return {
     id: room.id ?? fallbackRoom.id,
+    roomNumber: room.roomNumber ?? fallbackRoom.roomNumber ?? seed,
     name: room.name ?? fallbackRoom.name,
     ownerCode: room.ownerCode ?? fallbackRoom.ownerCode ?? `M-${seed}-93`,
     ownerCodeExpiresAt: room.ownerCodeExpiresAt ?? fallbackRoom.ownerCodeExpiresAt ?? now + twelveHours,
@@ -103,9 +105,12 @@ function migrateRoom(room: LegacyRoom, index: number): Room {
     playerCodeExpiresAt: room.playerCodeExpiresAt ?? fallbackRoom.playerCodeExpiresAt ?? now + sixHours,
     expiresAt: room.expiresAt ?? fallbackRoom.expiresAt ?? now + twelveHours,
     status: room.status ?? "waiting",
+    isJoinLocked: room.isJoinLocked ?? false,
     settings: normalizeSettings(room.settings),
     createdAt: room.createdAt ?? now,
     updatedAt: room.updatedAt ?? now,
+    finishedAt: room.finishedAt,
+    results: room.results,
     currentTurnTeamId: mapLegacyTeamId(room.currentTurnTeamId) ?? room.currentTurnTeamId,
   };
 }
@@ -228,6 +233,51 @@ function canUseStorage() {
   return typeof window !== "undefined" && Boolean(window.localStorage);
 }
 
+function canUseBroadcastChannel() {
+  return typeof window !== "undefined" && "BroadcastChannel" in window;
+}
+
+export function notifyLocalRoomUpdate() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.dispatchEvent(new CustomEvent(localRoomUpdatesChannelName));
+
+  if (canUseBroadcastChannel()) {
+    const channel = new BroadcastChannel(localRoomUpdatesChannelName);
+    channel.postMessage({ type: "room-state-updated", at: Date.now() });
+    channel.close();
+  }
+}
+
+export function subscribeLocalRoomUpdates(callback: () => void) {
+  if (typeof window === "undefined") {
+    return () => {};
+  }
+
+  const handleLocalEvent = () => callback();
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key === localStateKey) {
+      callback();
+    }
+  };
+  const channel = canUseBroadcastChannel()
+    ? new BroadcastChannel(localRoomUpdatesChannelName)
+    : null;
+
+  window.addEventListener(localRoomUpdatesChannelName, handleLocalEvent);
+  window.addEventListener("storage", handleStorage);
+  channel?.addEventListener("message", handleLocalEvent);
+
+  return () => {
+    window.removeEventListener(localRoomUpdatesChannelName, handleLocalEvent);
+    window.removeEventListener("storage", handleStorage);
+    channel?.removeEventListener("message", handleLocalEvent);
+    channel?.close();
+  };
+}
+
 export function createLocalId(prefix: string) {
   const randomPart = Math.random().toString(36).slice(2, 8);
   return `${prefix}-${Date.now().toString(36)}-${randomPart}`;
@@ -258,6 +308,7 @@ export function writeLocalState(state: LocalGameState) {
   }
 
   window.localStorage.setItem(localStateKey, JSON.stringify(state));
+  notifyLocalRoomUpdate();
 }
 
 export function updateLocalState(updater: (state: LocalGameState) => LocalGameState) {

@@ -2,9 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ActionLink, PageShell, Panel } from "../_components/game-ui";
-import type { BoardSquare, EffectiveRole, Player, Room, Team } from "@/types/game";
-import { getSessionPlayerId, readRoomSession } from "@/lib/auth/sessionRole";
-import { getBoard, saveBoard } from "@/lib/game/boardService";
+import type { BoardSquare, EffectiveRole } from "@/types/game";
+import { readRoomSession } from "@/lib/auth/sessionRole";
+import { saveBoard } from "@/lib/game/boardService";
 import { boardDistribution } from "@/lib/game/constants";
 import { validateBoardDistribution } from "@/lib/game/boardValidation";
 import {
@@ -12,9 +12,7 @@ import {
   getEffectiveRole,
   unauthorizedMessage,
 } from "@/lib/game/permissions";
-import { getPlayers } from "@/lib/game/playerService";
-import { getRoom } from "@/lib/game/roomService";
-import { getTeams } from "@/lib/game/teamService";
+import { useRoomState } from "@/lib/game/roomState";
 
 type SquareChoice = "" | "100" | "300" | "500" | "700" | "mine";
 
@@ -45,59 +43,19 @@ function squareToChoice(square: BoardSquare): SquareChoice {
 }
 
 export default function CaptainBoardPage() {
-  const [room, setRoom] = useState<Room | null>(null);
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [actorId, setActorId] = useState<string>();
   const [choicesState, setChoicesState] = useState<SquareChoice[]>(Array(12).fill(""));
   const [selectedTool, setSelectedTool] = useState<SquareChoice>("100");
   const [locked, setLocked] = useState(false);
   const [message, setMessage] = useState("");
-  const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    async function loadBoardPage() {
-      const session = readRoomSession();
-      const activeRoom = await getRoom(session?.roomId);
-      if (!activeRoom) {
-        setLoaded(true);
-        return;
-      }
-
-      const roomTeams = await getTeams(activeRoom.id);
-      const roomPlayers = await getPlayers(activeRoom.id);
-      const currentActorId = getSessionPlayerId(session);
-      const ownTeam = roomTeams.find(
-        (team) => team.captainId === currentActorId || team.captainPlayerId === currentActorId,
-      );
-
-      setActorId(currentActorId);
-      setRoom(activeRoom);
-      setTeams(roomTeams);
-      setPlayers(roomPlayers);
-
-      if (ownTeam) {
-        const board = await getBoard(activeRoom.id, ownTeam.id);
-        setChoicesState(board.locked ? board.squares.map(squareToChoice) : Array(12).fill(""));
-        setLocked(board.locked);
-      }
-
-      setLoaded(true);
-    }
-
-    const timer = window.setTimeout(() => {
-      void loadBoardPage();
-    }, 0);
-
-    return () => window.clearTimeout(timer);
-  }, []);
-
   const session = readRoomSession();
+  const state = useRoomState(session?.roomId);
+  const { room, teams, players, boards, actorId, loading, refresh } = state;
   const currentPlayer = players.find((player) => player.id === actorId);
   const effectiveRole: EffectiveRole = getEffectiveRole(actorId, room, session, teams, currentPlayer);
   const ownTeam = teams.find(
     (team) => team.captainId === actorId || team.captainPlayerId === actorId,
   );
+  const ownBoard = boards.find((board) => board.teamId === ownTeam?.id);
   const setupOpen = room?.status === "board_setup" || locked;
   const boardSquares = useMemo(
     () =>
@@ -110,6 +68,19 @@ export default function CaptainBoardPage() {
     [choicesState, ownTeam, room],
   );
   const validation = validateBoardDistribution(boardSquares);
+
+  useEffect(() => {
+    if (!ownBoard) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setChoicesState(ownBoard.locked ? ownBoard.squares.map(squareToChoice) : Array(12).fill(""));
+      setLocked(ownBoard.locked);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [ownBoard]);
 
   function paintSquare(index: number) {
     if (locked) {
@@ -134,9 +105,10 @@ export default function CaptainBoardPage() {
     await saveBoard(room.id, ownTeam.id, squares, true);
     setLocked(true);
     setMessage("تم اعتماد اللوحة وقفلها.");
+    await refresh();
   }
 
-  if (!loaded) {
+  if (loading) {
     return (
       <PageShell
         eyebrow="الكابتن"
@@ -170,6 +142,37 @@ export default function CaptainBoardPage() {
             <ActionLink href="/waiting-room" variant="light">
               العودة لغرفة الانتظار
             </ActionLink>
+          </div>
+        </Panel>
+      </PageShell>
+    );
+  }
+
+  if (room?.status === "finished" || room?.status === "locked" || room?.status === "expired") {
+    return (
+      <PageShell
+        eyebrow="الكابتن"
+        title="تجهيز اللوحة"
+        description="تم إغلاق تجهيز اللوحة لهذه الغرفة."
+      >
+        <Panel title="اللوحة غير قابلة للتعديل">
+          <div className="grid gap-4">
+            <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm font-bold leading-6 text-rose-800 ring-1 ring-rose-100">
+              {room.status === "finished"
+                ? "انتهت اللعبة، لا يمكن تعديل اللوحة"
+                : room.status === "locked"
+                  ? "تم قفل الغرفة من المشرف"
+                  : "انتهت صلاحية الغرفة"}
+            </p>
+            {room.status === "finished" ? (
+              <ActionLink href={`/results?room=${room.id}`} variant="secondary">
+                عرض النتائج
+              </ActionLink>
+            ) : (
+              <ActionLink href="/waiting-room" variant="light">
+                العودة لغرفة الانتظار
+              </ActionLink>
+            )}
           </div>
         </Panel>
       </PageShell>

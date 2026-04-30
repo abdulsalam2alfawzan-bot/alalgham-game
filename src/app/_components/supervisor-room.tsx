@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { QRCodeSVG } from "qrcode.react";
 import { ActionLink, InfoGrid, PageShell, Panel } from "./game-ui";
 import type { EffectiveRole, GameEvent, Objection, Player, Question, Room, Team, Turn } from "@/types/game";
@@ -24,12 +25,31 @@ import {
 } from "@/lib/auth/roles";
 import { addGameEvent, getRoomEvents } from "@/lib/game/eventService";
 import { getObjections, resolveObjection } from "@/lib/game/objectionService";
+import { saveBoard } from "@/lib/game/boardService";
 import { getPlayers, assignPlayerToTeam, kickPlayer } from "@/lib/game/playerService";
 import { getQuestions } from "@/lib/game/questionService";
 import { futureTeamDefinitions, getDefaultTeamName } from "@/lib/game/constants";
-import { buildJoinUrl, getRoom, updateRoomStatus } from "@/lib/game/roomService";
+import {
+  endGame,
+  lockJoin,
+  lockRoom,
+  pauseGame,
+  restartGame,
+  resumeGame,
+  setRoomLifecycleStatus,
+  startBoardSetup,
+  startGame,
+  startTeamAssignment,
+  unlockJoin,
+  unlockRoom,
+  updateRoomLifecyclePatch,
+} from "@/lib/game/gameStateService";
+import { buildJoinUrl, getRoom } from "@/lib/game/roomService";
+import { useRoomState } from "@/lib/game/roomState";
+import { calculateScoreChange } from "@/lib/game/scoring";
 import { adjustTeamScore, getTeams, removeCaptain, saveTeam, setCaptain } from "@/lib/game/teamService";
-import { getCurrentTurn } from "@/lib/game/turnService";
+import { getCurrentTurn, saveTurn } from "@/lib/game/turnService";
+import { getNextTeamTurn } from "@/lib/game/turnOrder";
 import { buildOwnerQrUrl } from "@/lib/qr/roomQrLinks";
 import {
   clampNumber,
@@ -57,7 +77,31 @@ function roleLabel(player: Player) {
   return player.role === "captain" || player.isCaptain ? "كابتن" : "لاعب";
 }
 
+type SupervisorTab =
+  | "room"
+  | "codes"
+  | "players"
+  | "teams"
+  | "state"
+  | "play"
+  | "scores"
+  | "events"
+  | "danger";
+
+const supervisorTabs: Array<{ id: SupervisorTab; label: string }> = [
+  { id: "room", label: "الغرفة" },
+  { id: "codes", label: "الأكواد" },
+  { id: "players", label: "اللاعبين" },
+  { id: "teams", label: "الفرق" },
+  { id: "state", label: "حالة اللعبة" },
+  { id: "play", label: "لوحة اللعب" },
+  { id: "scores", label: "النقاط" },
+  { id: "events", label: "الأحداث" },
+  { id: "danger", label: "الخطر" },
+];
+
 export function SupervisorRoom() {
+  const router = useRouter();
   const [room, setRoom] = useState<Room | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
@@ -71,11 +115,15 @@ export function SupervisorRoom() {
   const [message, setMessage] = useState("");
   const [showMoreEvents, setShowMoreEvents] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [requestedRoomId, setRequestedRoomId] = useState<string>();
+  const [pendingAction, setPendingAction] = useState("");
+  const [activeTab, setActiveTab] = useState<SupervisorTab>("room");
 
   async function loadSupervisorRoom() {
     const session = readRoomSession();
     const params = new URLSearchParams(window.location.search);
     const roomId = params.get("room") ?? session?.roomId;
+    setRequestedRoomId(roomId ?? undefined);
     const activeRoom = await getRoom(roomId ?? undefined);
     if (!activeRoom) {
       setLoaded(true);
@@ -106,6 +154,7 @@ export function SupervisorRoom() {
   }, []);
 
   const session = readRoomSession();
+  const liveState = useRoomState(requestedRoomId);
   const effectiveRole: EffectiveRole = getEffectiveRole(undefined, room, session, teams);
   const sessionValid = isValidOwnerSession(room, session);
   const ownerLink = room ? buildOwnerQrUrl(room.ownerCode) : "";
@@ -114,7 +163,37 @@ export function SupervisorRoom() {
   const currentQuestion = questions[0];
   const activeTeam = teams.find((team) => team.id === selectedTeamId);
   const visibleEvents = showMoreEvents ? events : events.slice(0, 10);
-  const canEditTeamNames = room ? !["playing", "paused", "finished", "expired"].includes(room.status) : false;
+  const canEditTeamNames = room ? !["playing", "paused", "finished", "locked", "expired"].includes(room.status) : false;
+  const readyTeamsCount = teams.filter((team) => team.boardLocked).length;
+  const turnBoard = liveState.boards.find((board) => board.teamId === turn?.ownerTeamId);
+  const turnSquare = turnBoard?.squares.find((square) => square.id === turn?.selectedSquareId);
+
+  useEffect(() => {
+    if (liveState.loading || !liveState.room) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setRoom(liveState.room);
+      setTeams(liveState.teams);
+      setPlayers(liveState.players);
+      setEvents(liveState.events);
+      setTurn(liveState.currentTurn);
+      setQuestions(liveState.questions);
+      setSelectedTeamId((current) => current || liveState.teams[0]?.id || "");
+      setLoaded(true);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    liveState.loading,
+    liveState.room,
+    liveState.teams,
+    liveState.players,
+    liveState.events,
+    liveState.currentTurn,
+    liveState.questions,
+  ]);
 
   const roomAccessMessage = useMemo(() => {
     if (!room) {
@@ -155,13 +234,23 @@ export function SupervisorRoom() {
     }
   }
 
-  async function updatePhase(status: Room["status"]) {
+  async function runStateAction(label: string, action: () => Promise<unknown>) {
     if (!room || !guard(canManageTeams(effectiveRole))) {
       return;
     }
 
-    await updateRoomStatus(room.id, status);
-    await loadSupervisorRoom();
+    setPendingAction(label);
+    setMessage("جاري التحديث...");
+    try {
+      await action();
+      setMessage("تم الحفظ");
+      await loadSupervisorRoom();
+    } catch (error) {
+      console.warn("Supervisor state action failed", error);
+      setMessage("فشل التحديث، حاول مرة أخرى");
+    } finally {
+      setPendingAction("");
+    }
   }
 
   async function updateTeamName(team: Team, name: string) {
@@ -219,8 +308,87 @@ export function SupervisorRoom() {
       return;
     }
 
+    if (turn && turnSquare) {
+      const attacker = teams.find((team) => team.id === turn.attackerTeamId);
+      const owner = teams.find((team) => team.id === turn.ownerTeamId);
+      const ownerDecision = action === "صاحب اللوحة صح" ? true : action === "صاحب اللوحة خطأ" ? false : undefined;
+      const attackerDecision = action === "المهاجم صح" || action === "صح"
+        ? true
+        : action === "المهاجم خطأ" || action === "خطأ"
+          ? false
+          : undefined;
+
+      if (attacker && attackerDecision !== undefined) {
+        const resolution = calculateScoreChange({
+          square: turnSquare,
+          useDouble: turn.useDouble,
+          attackerCorrect: attackerDecision,
+        });
+
+        if (resolution.finalState === "transfer_to_owner") {
+          await saveTurn({ ...turn, phase: "owner_answer" });
+          await addGameEvent(room.id, "turn_resolved", "انتقلت الإجابة إلى صاحب اللوحة");
+          setMessage("انتقلت الإجابة إلى صاحب اللوحة");
+          await loadSupervisorRoom();
+          return;
+        }
+
+        if (resolution.attackerChange) {
+          await adjustTeamScore(room.id, attacker.id, resolution.attackerChange);
+        }
+
+        await revealSquareAndAdvanceTurn(resolution.message);
+        return;
+      }
+
+      if (owner && ownerDecision !== undefined) {
+        const resolution = calculateScoreChange({
+          square: turnSquare,
+          useDouble: false,
+          attackerCorrect: false,
+          ownerCorrect: ownerDecision,
+        });
+
+        if (resolution.ownerChange) {
+          await adjustTeamScore(room.id, owner.id, resolution.ownerChange);
+        }
+
+        await revealSquareAndAdvanceTurn(resolution.message);
+        return;
+      }
+    }
+
     await addGameEvent(room.id, "turn_resolved", `إجراء المشرف: ${action}`);
     setMessage(`تم تسجيل إجراء: ${action}`);
+    await loadSupervisorRoom();
+  }
+
+  async function revealSquareAndAdvanceTurn(messageText: string) {
+    if (!room || !turn || !turnBoard || !turnSquare) {
+      return;
+    }
+
+    await saveBoard(
+      room.id,
+      turnBoard.teamId,
+      turnBoard.squares.map((square) =>
+        square.id === turnSquare.id ? { ...square, revealed: true } : square,
+      ),
+      turnBoard.locked,
+    );
+
+    const nextTeam = getNextTeamTurn(teams, turn.attackerTeamId);
+    await saveTurn({ ...turn, phase: "resolved" });
+    if (nextTeam) {
+      const nextTeamName = teams.find((team) => team.id === nextTeam.id)?.name ?? nextTeam.id;
+      await updateRoomLifecyclePatch(
+        room.id,
+        { status: "playing", currentTurnTeamId: nextTeam.id },
+        `بدأ دور ${nextTeamName}`,
+      );
+    }
+    await addGameEvent(room.id, "turn_resolved", messageText);
+    setMessage("تم احتساب الجولة");
     await loadSupervisorRoom();
   }
 
@@ -256,10 +424,17 @@ export function SupervisorRoom() {
       return;
     }
 
-    await updateRoomStatus(room.id, "finished");
-    await addGameEvent(room.id, "game_finished", "تم إنهاء اللعبة");
-    setMessage("تم إنهاء اللعبة");
-    await loadSupervisorRoom();
+    const confirmed = window.confirm(
+      "إنهاء اللعبة؟\nسيتم إيقاف اللعب وحفظ النتائج النهائية. لن يستطيع اللاعبون تعديل الإجابات أو اللوحات بعد الإنهاء.",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    await runStateAction("finish", async () => {
+      await endGame(room.id);
+      router.push(`/results?room=${room.id}`);
+    });
   }
 
   if (!loaded) {
@@ -312,6 +487,26 @@ export function SupervisorRoom() {
         </p>
       ) : null}
 
+      <nav className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-9" aria-label="أقسام غرفة المشرف">
+        {supervisorTabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setActiveTab(tab.id)}
+            className={`min-h-11 rounded-2xl px-2 text-sm font-black transition ${
+              activeTab === tab.id
+                ? "bg-slate-950 text-white"
+                : tab.id === "danger"
+                  ? "bg-rose-50 text-rose-800 ring-1 ring-rose-100"
+                  : "bg-white text-slate-700 ring-1 ring-slate-200"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </nav>
+
+      <div className={activeTab === "room" ? "grid gap-5" : "hidden"}>
       <Panel title="بيانات الغرفة">
         <InfoGrid
           items={[
@@ -325,7 +520,9 @@ export function SupervisorRoom() {
           ]}
         />
       </Panel>
+      </div>
 
+      <div className={activeTab === "codes" ? "grid gap-5" : "hidden"}>
       <Panel title="أكواد و QR الغرفة">
         <div className="grid gap-4 lg:grid-cols-2">
           <article className="grid gap-3 rounded-3xl border-2 border-amber-300 bg-amber-50 p-4">
@@ -396,7 +593,9 @@ export function SupervisorRoom() {
           </ActionLink>
         </div>
       </Panel>
+      </div>
 
+      <div className={activeTab === "teams" ? "grid gap-5" : "hidden"}>
       <Panel title="إعداد الفرق">
         <div className="grid gap-4 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
           <p className="text-sm font-bold leading-6 text-slate-600">
@@ -437,39 +636,25 @@ export function SupervisorRoom() {
           </div>
         </div>
       </Panel>
+      </div>
 
+      <div className={activeTab === "players" ? "grid gap-5" : "hidden"}>
       <Panel title="اللاعبون">
         <div className="grid gap-3">
           {activePlayers.map((player) => {
             const playerTeam = teams.find((team) => team.id === player.teamId);
             const isCaptain = player.role === "captain" || teams.some((team) => team.captainId === player.id || team.captainPlayerId === player.id);
             return (
-              <article key={player.id} className="grid gap-3 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200 lg:grid-cols-[1fr_12rem_11rem_9rem] lg:items-center">
-                <div>
+              <article key={player.id} className="grid gap-2 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="font-black text-slate-950">{player.name}</h3>
-                  <p className="text-sm font-bold text-slate-500">
-                    {player.status} · {roleLabel(player)} · {playerTeam?.name ?? "بدون فريق"}
-                  </p>
+                  <span className={`rounded-full px-3 py-1 text-xs font-black ${isCaptain ? "bg-teal-100 text-teal-900" : "bg-slate-100 text-slate-700"}`}>
+                    {roleLabel(player)}
+                  </span>
                 </div>
-                <select value={player.teamId ?? ""} onChange={(event) => movePlayer(player.id, event.target.value)} className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-3 font-bold">
-                  <option value="" disabled>اختر فريق</option>
-                  {teams.map((team) => (
-                    <option key={team.id} value={team.id}>{team.name}</option>
-                  ))}
-                </select>
-                <div className="grid gap-2">
-                  <button type="button" disabled={!player.teamId} onClick={() => player.teamId && chooseCaptain(player.teamId, player.id)} className="min-h-11 rounded-2xl bg-amber-400 px-3 font-black text-slate-950 disabled:opacity-40">
-                    تعيين كابتن
-                  </button>
-                  {isCaptain && player.teamId ? (
-                    <button type="button" onClick={() => clearCaptain(player.teamId!)} className="min-h-11 rounded-2xl border border-slate-200 bg-white px-3 font-black text-slate-700">
-                      إزالة الكابتن
-                    </button>
-                  ) : null}
-                </div>
-                <button type="button" onClick={() => removePlayer(player.id)} className="min-h-12 rounded-2xl border border-rose-200 bg-rose-50 px-3 font-black text-rose-700">
-                  طرد لاعب
-                </button>
+                <p className="text-sm font-bold text-slate-500">
+                  {player.status} · {playerTeam?.name ?? "بدون فريق"}
+                </p>
               </article>
             );
           })}
@@ -480,7 +665,9 @@ export function SupervisorRoom() {
           ) : null}
         </div>
       </Panel>
+      </div>
 
+      <div className={activeTab === "teams" ? "grid gap-5" : "hidden"}>
       <Panel title="الفرق">
         <div className="grid gap-3 sm:grid-cols-2">
           {teams.map((team) => {
@@ -502,8 +689,67 @@ export function SupervisorRoom() {
                   </strong>
                 </div>
                 <p className="text-sm font-bold text-slate-500">الكابتن: {captain?.name ?? "لم يحدد"}</p>
-                <div className="rounded-2xl bg-slate-50 px-3 py-2 text-sm font-bold leading-7 text-slate-600">
-                  {members.length ? members.map((member) => member.name).join("، ") : "لا يوجد أعضاء بعد"}
+                <div className="grid gap-2">
+                  {members.length ? (
+                    members.map((member) => {
+                      const memberIsCaptain = member.role === "captain" || team.captainId === member.id || team.captainPlayerId === member.id;
+                      return (
+                        <div key={member.id} className="grid gap-2 rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-100">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <p className="font-black text-slate-950">{member.name}</p>
+                              <p className="text-xs font-bold text-slate-500">{member.status}</p>
+                            </div>
+                            <span className={`rounded-full px-3 py-1 text-xs font-black ${memberIsCaptain ? "bg-teal-100 text-teal-900" : "bg-white text-slate-700"}`}>
+                              {memberIsCaptain ? "كابتن" : "لاعب"}
+                            </span>
+                          </div>
+                          <div className="grid gap-2 sm:grid-cols-3">
+                            <select
+                              value={member.teamId ?? ""}
+                              onChange={(event) => movePlayer(member.id, event.target.value)}
+                              className="min-h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-bold"
+                              aria-label={`نقل ${member.name}`}
+                            >
+                              {teams.map((targetTeam) => (
+                                <option key={targetTeam.id} value={targetTeam.id}>
+                                  نقل إلى {targetTeam.name}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              disabled={!member.teamId}
+                              onClick={() => member.teamId && chooseCaptain(member.teamId, member.id)}
+                              className="min-h-11 rounded-2xl bg-amber-400 px-3 text-sm font-black text-slate-950 disabled:opacity-40"
+                            >
+                              تعيين كابتن
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removePlayer(member.id)}
+                              className="min-h-11 rounded-2xl border border-rose-200 bg-rose-50 px-3 text-sm font-black text-rose-700"
+                            >
+                              طرد
+                            </button>
+                          </div>
+                          {memberIsCaptain ? (
+                            <button
+                              type="button"
+                              onClick={() => clearCaptain(team.id)}
+                              className="min-h-10 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-black text-slate-700"
+                            >
+                              إزالة الكابتن
+                            </button>
+                          ) : null}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <p className="rounded-2xl bg-slate-50 px-3 py-2 text-sm font-bold leading-7 text-slate-600">
+                      لا يوجد أعضاء بعد
+                    </p>
+                  )}
                 </div>
                 <p className={`rounded-2xl px-3 py-2 text-sm font-bold ${team.boardLocked ? "bg-teal-50 text-teal-900" : "bg-slate-50 text-slate-600"}`}>
                   اللوحة: {team.boardLocked ? "جاهزة" : "غير جاهزة"}
@@ -511,33 +757,90 @@ export function SupervisorRoom() {
               </article>
             );
           })}
+          {futureTeamDefinitions.map((team) => (
+            <article key={team.id} className="grid gap-2 rounded-3xl border border-slate-200 bg-slate-100 p-4 text-slate-400">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-lg font-black">{team.name}</p>
+                <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-slate-500">قريبًا</span>
+              </div>
+              <p className="text-sm font-bold">غير متاح في نسخة الـ MVP الحالية</p>
+            </article>
+          ))}
         </div>
       </Panel>
+      </div>
 
-      <Panel title="مراحل اللعبة">
+      <div className={activeTab === "state" ? "grid gap-5" : "hidden"}>
+      <Panel title="حالة اللعبة">
         <div className="grid gap-4 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
-          <p className="text-sm font-bold text-slate-500">المرحلة الحالية</p>
-          <p className="text-3xl font-black text-slate-950">{room?.status}</p>
+          <InfoGrid
+            items={[
+              { label: "الحالة الحالية", value: room?.status ?? "..." },
+              { label: "آخر تحديث", value: room?.updatedAt ? new Date(room.updatedAt).toLocaleString("ar-SA") : "..." },
+              { label: "عدد اللاعبين", value: `${activePlayers.length}` },
+              { label: "الفرق الجاهزة", value: `${readyTeamsCount}/${teams.length}` },
+            ]}
+          />
           <div className="grid gap-3 sm:grid-cols-2">
             {room?.status === "waiting" ? (
-              <button type="button" onClick={() => updatePhase("team_assignment")} className="min-h-14 rounded-2xl bg-teal-600 px-4 font-black text-white">بدء توزيع الفرق</button>
+              <>
+                <button type="button" disabled={pendingAction === "team_assignment"} onClick={() => runStateAction("team_assignment", () => startTeamAssignment(room.id))} className="min-h-14 rounded-2xl bg-teal-600 px-4 font-black text-white disabled:opacity-50">بدء توزيع الفرق</button>
+                <button type="button" disabled={pendingAction === "lock_join"} onClick={() => runStateAction("lock_join", () => lockJoin(room.id))} className="min-h-14 rounded-2xl bg-amber-400 px-4 font-black text-slate-950 disabled:opacity-50">قفل دخول اللاعبين</button>
+              </>
             ) : null}
             {room?.status === "team_assignment" ? (
-              <button type="button" onClick={() => updatePhase("board_setup")} className="min-h-14 rounded-2xl bg-teal-600 px-4 font-black text-white">بدء تجهيز اللوحات</button>
+              <>
+                <button type="button" disabled={pendingAction === "board_setup"} onClick={() => runStateAction("board_setup", () => startBoardSetup(room.id))} className="min-h-14 rounded-2xl bg-teal-600 px-4 font-black text-white disabled:opacity-50">بدء تجهيز اللوحات</button>
+                <button type="button" disabled={pendingAction === "lock_join"} onClick={() => runStateAction("lock_join", () => lockJoin(room.id))} className="min-h-14 rounded-2xl bg-amber-400 px-4 font-black text-slate-950 disabled:opacity-50">قفل دخول اللاعبين</button>
+                <button type="button" disabled={pendingAction === "waiting"} onClick={() => runStateAction("waiting", () => setRoomLifecycleStatus(room.id, "waiting", "تمت إعادة الغرفة للانتظار"))} className="min-h-14 rounded-2xl border border-slate-200 bg-white px-4 font-black text-slate-700 disabled:opacity-50">إعادة للانتظار</button>
+              </>
             ) : null}
             {room?.status === "board_setup" ? (
-              <button type="button" onClick={() => updatePhase("playing")} className="min-h-14 rounded-2xl bg-teal-600 px-4 font-black text-white">بدء اللعبة</button>
+              <>
+                <button type="button" disabled={pendingAction === "start_game"} onClick={() => runStateAction("start_game", () => startGame(room.id))} className="min-h-14 rounded-2xl bg-teal-600 px-4 font-black text-white disabled:opacity-50">بدء اللعبة</button>
+                <button type="button" disabled={pendingAction === "team_assignment"} onClick={() => runStateAction("team_assignment", () => startTeamAssignment(room.id))} className="min-h-14 rounded-2xl border border-slate-200 bg-white px-4 font-black text-slate-700 disabled:opacity-50">إعادة توزيع الفرق</button>
+                <button type="button" disabled={pendingAction === "lock_room"} onClick={() => runStateAction("lock_room", () => lockRoom(room.id))} className="min-h-14 rounded-2xl bg-rose-600 px-4 font-black text-white disabled:opacity-50">قفل الغرفة</button>
+              </>
             ) : null}
             {room?.status === "playing" ? (
-              <button type="button" onClick={() => updatePhase("paused")} className="min-h-14 rounded-2xl bg-amber-400 px-4 font-black text-slate-950">إيقاف مؤقت</button>
+              <>
+                <button type="button" disabled={pendingAction === "pause"} onClick={() => runStateAction("pause", () => pauseGame(room.id))} className="min-h-14 rounded-2xl bg-amber-400 px-4 font-black text-slate-950 disabled:opacity-50">إيقاف مؤقت</button>
+                <button type="button" onClick={finishGame} className="min-h-14 rounded-2xl bg-rose-600 px-4 font-black text-white">إنهاء اللعبة</button>
+                <button type="button" disabled={pendingAction === "lock_room"} onClick={() => runStateAction("lock_room", () => lockRoom(room.id))} className="min-h-14 rounded-2xl border border-rose-200 bg-rose-50 px-4 font-black text-rose-700 disabled:opacity-50">قفل الغرفة</button>
+              </>
             ) : null}
             {room?.status === "paused" ? (
-              <button type="button" onClick={() => updatePhase("playing")} className="min-h-14 rounded-2xl bg-teal-600 px-4 font-black text-white">استئناف</button>
+              <>
+                <button type="button" disabled={pendingAction === "resume"} onClick={() => runStateAction("resume", () => resumeGame(room.id))} className="min-h-14 rounded-2xl bg-teal-600 px-4 font-black text-white disabled:opacity-50">استئناف اللعبة</button>
+                <button type="button" onClick={finishGame} className="min-h-14 rounded-2xl bg-rose-600 px-4 font-black text-white">إنهاء اللعبة</button>
+                <button type="button" disabled={pendingAction === "restart"} onClick={() => runStateAction("restart", () => restartGame(room.id))} className="min-h-14 rounded-2xl border border-slate-200 bg-white px-4 font-black text-slate-700 disabled:opacity-50">إعادة ضبط الجولة</button>
+              </>
+            ) : null}
+            {room?.status === "finished" ? (
+              <>
+                <ActionLink href={`/results?room=${room.id}`} variant="secondary">عرض النتائج</ActionLink>
+                <button type="button" disabled={pendingAction === "restart"} onClick={() => window.confirm("إعادة تشغيل اللعبة؟\nسيتم تصفير النقاط واللوحات والجولات، مع الاحتفاظ بالغرفة واللاعبين والأكواد.") && runStateAction("restart", () => restartGame(room.id))} className="min-h-14 rounded-2xl bg-amber-400 px-4 font-black text-slate-950 disabled:opacity-50">إعادة تشغيل اللعبة</button>
+                <button type="button" disabled={pendingAction === "lock_room"} onClick={() => window.confirm("قفل الغرفة نهائيًا؟") && runStateAction("lock_room", () => lockRoom(room.id))} className="min-h-14 rounded-2xl bg-rose-600 px-4 font-black text-white disabled:opacity-50">قفل الغرفة نهائيًا</button>
+              </>
+            ) : null}
+            {room?.status === "locked" ? (
+              <>
+                <button type="button" disabled={pendingAction === "unlock_room"} onClick={() => runStateAction("unlock_room", () => unlockRoom(room.id))} className="min-h-14 rounded-2xl bg-teal-600 px-4 font-black text-white disabled:opacity-50">فتح الغرفة</button>
+                <ActionLink href={`/results?room=${room.id}`} variant="light">عرض الحالة</ActionLink>
+                <button type="button" onClick={finishGame} className="min-h-14 rounded-2xl bg-rose-600 px-4 font-black text-white">إنهاء اللعبة</button>
+              </>
             ) : null}
           </div>
+          {room?.isJoinLocked ? (
+            <button type="button" disabled={pendingAction === "unlock_join"} onClick={() => room && runStateAction("unlock_join", () => unlockJoin(room.id))} className="min-h-14 rounded-2xl border border-teal-200 bg-teal-50 px-4 font-black text-teal-900 disabled:opacity-50">
+              فتح دخول اللاعبين
+            </button>
+          ) : null}
         </div>
       </Panel>
+      </div>
 
+      <div className={activeTab === "play" ? "grid gap-5" : "hidden"}>
       {room?.status === "playing" || room?.status === "paused" ? (
         <Panel title="لوحة الحكم">
           <div className="grid gap-4 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
@@ -555,8 +858,10 @@ export function SupervisorRoom() {
               <p className="mt-3 rounded-2xl bg-white/10 px-3 py-2 text-sm">الإجابة المرسلة: {turn?.submittedAnswer ?? "لم ترسل بعد"}</p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
-              <button type="button" onClick={() => logJudgeAction("صح")} className="min-h-14 rounded-2xl bg-teal-600 px-4 text-lg font-black text-white">صح</button>
-              <button type="button" onClick={() => logJudgeAction("خطأ")} className="min-h-14 rounded-2xl bg-rose-600 px-4 text-lg font-black text-white">خطأ</button>
+              <button type="button" onClick={() => logJudgeAction("المهاجم صح")} className="min-h-14 rounded-2xl bg-teal-600 px-4 text-lg font-black text-white">المهاجم صح</button>
+              <button type="button" onClick={() => logJudgeAction("المهاجم خطأ")} className="min-h-14 rounded-2xl bg-rose-600 px-4 text-lg font-black text-white">المهاجم خطأ</button>
+              <button type="button" onClick={() => logJudgeAction("صاحب اللوحة صح")} className="min-h-14 rounded-2xl bg-teal-50 px-4 text-lg font-black text-teal-900 ring-1 ring-teal-100">صاحب اللوحة صح</button>
+              <button type="button" onClick={() => logJudgeAction("صاحب اللوحة خطأ")} className="min-h-14 rounded-2xl bg-rose-50 px-4 text-lg font-black text-rose-800 ring-1 ring-rose-100">صاحب اللوحة خطأ</button>
               <button type="button" onClick={() => logJudgeAction("تغيير السؤال")} className="min-h-14 rounded-2xl border border-slate-200 bg-white px-4 font-black text-slate-700">تغيير السؤال</button>
               <button type="button" onClick={() => logJudgeAction("إلغاء السؤال")} className="min-h-14 rounded-2xl border border-slate-200 bg-white px-4 font-black text-slate-700">إلغاء السؤال</button>
             </div>
@@ -567,7 +872,9 @@ export function SupervisorRoom() {
           </div>
         </Panel>
       ) : null}
+      </div>
 
+      <div className={activeTab === "scores" ? "grid gap-5" : "hidden"}>
       <Panel title="إدارة النقاط">
         <div className="grid gap-3 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200 lg:grid-cols-[1fr_8rem_1fr_8rem_8rem]">
           <select value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)} className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-3 font-bold">
@@ -595,7 +902,9 @@ export function SupervisorRoom() {
           {!objections.length ? <p className="rounded-2xl bg-slate-50 px-4 py-3 text-sm font-bold text-slate-500">لا توجد اعتراضات حالية.</p> : null}
         </div>
       </Panel>
+      </div>
 
+      <div className={activeTab === "events" ? "grid gap-5" : "hidden"}>
       <Panel title="سجل الأحداث">
         <ol className="grid gap-3">
           {visibleEvents.map((event, index) => (
@@ -611,7 +920,9 @@ export function SupervisorRoom() {
           </button>
         ) : null}
       </Panel>
+      </div>
 
+      <div className={activeTab === "danger" ? "grid gap-5" : "hidden"}>
       <Panel title="منطقة الخطر">
         <div className="grid gap-4 rounded-3xl border border-rose-200 bg-rose-50 p-4">
           <p className="text-sm font-bold leading-6 text-rose-800">
@@ -620,8 +931,33 @@ export function SupervisorRoom() {
           <button type="button" onClick={finishGame} className="min-h-14 rounded-2xl bg-rose-600 px-4 text-lg font-black text-white">
             إنهاء اللعبة
           </button>
+          <button
+            type="button"
+            disabled={!room || pendingAction === "restart"}
+            onClick={() =>
+              room &&
+              window.confirm("إعادة تشغيل اللعبة؟\nسيتم تصفير النقاط واللوحات والجولات، مع الاحتفاظ بالغرفة واللاعبين والأكواد.") &&
+              runStateAction("restart", () => restartGame(room.id))
+            }
+            className="min-h-14 rounded-2xl border border-rose-200 bg-white px-4 text-lg font-black text-rose-700 disabled:opacity-50"
+          >
+            إعادة تشغيل اللعبة
+          </button>
+          <button
+            type="button"
+            disabled={!room || pendingAction === "lock_room"}
+            onClick={() =>
+              room &&
+              window.confirm("قفل الغرفة نهائيًا؟") &&
+              runStateAction("lock_room", () => lockRoom(room.id))
+            }
+            className="min-h-14 rounded-2xl border border-rose-200 bg-white px-4 text-lg font-black text-rose-700 disabled:opacity-50"
+          >
+            قفل الغرفة نهائيًا
+          </button>
         </div>
       </Panel>
+      </div>
     </PageShell>
   );
 }
