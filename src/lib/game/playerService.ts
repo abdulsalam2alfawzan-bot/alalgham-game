@@ -40,16 +40,16 @@ export async function getPlayers(roomId: string) {
 export async function joinRoom(playerCode: string, playerName: string) {
   const normalizedPlayerCode = sanitizeCode(playerCode);
   if (!isValidPlayerCode(normalizedPlayerCode)) {
-    return { ok: false as const, message: "كود اللاعب غير صحيح" };
+    return { ok: false as const, message: "كود اللاعبين غير صحيح أو منتهي" };
   }
 
   const room = await getRoomByPlayerCode(normalizedPlayerCode);
   if (!room) {
-    return { ok: false as const, message: "كود اللاعب غير صحيح" };
+    return { ok: false as const, message: "كود اللاعبين غير صحيح أو منتهي" };
   }
 
   if (isPlayerCodeExpired(room)) {
-    return { ok: false as const, message: "انتهت صلاحية كود اللاعب" };
+    return { ok: false as const, message: "كود اللاعبين غير صحيح أو منتهي" };
   }
 
   const safePlayerName = sanitizeName(playerName);

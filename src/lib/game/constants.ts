@@ -3,8 +3,6 @@ import type { PointValue, RoomSettings } from "@/types/game";
 export const gameName = "الألغام";
 export const platformName = "جوّكم";
 
-export const mockActivationCodes = ["JWK-4821", "JWK-2026", "DEMO-1234"];
-
 export const startingScore = 1000;
 export const minePenalty = 500;
 export const teamCountOptions = [2, 3, 4];
@@ -41,15 +39,12 @@ export const defaultAnswerDurations: Record<PointValue, number> = {
 
 export const defaultRoomSettings: RoomSettings = {
   teamsCount: 4,
-  teamCount: 4,
   playersPerTeam: 3,
   categories: categories.slice(0, 4),
   answerDurations: defaultAnswerDurations,
   doubleEnabled: true,
   minePenalty,
-  mineReflection: false,
   mineReflectionEnabled: false,
-  objectionsCount: 2,
   objectionsPerTeam: 2,
   startingScore,
 };

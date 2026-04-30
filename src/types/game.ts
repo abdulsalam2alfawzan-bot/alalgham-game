@@ -1,6 +1,4 @@
-export type ActivationCodeStatus = "unused" | "reserved" | "used" | "expired";
 export type GameStatus =
-  | "draft"
   | "waiting"
   | "team_assignment"
   | "board_setup"
@@ -20,28 +18,14 @@ export type ObjectionStatus = "open" | "accepted" | "rejected";
 export type EffectiveRole = "player" | "captain" | "organizer";
 export type PlayerRole = "player" | "captain";
 
-export type ActivationCode = {
-  code: string;
-  status: ActivationCodeStatus;
-  packageType: "demo" | "single_room" | "event" | "school";
-  reservedByUid?: string;
-  usedByRoomId?: string;
-  expiresAt?: number;
-  createdAt: number;
-  updatedAt: number;
-};
-
 export type RoomSettings = {
   teamsCount: number;
-  teamCount: number;
   playersPerTeam: number;
   categories: string[];
   answerDurations: Record<PointValue, number>;
   doubleEnabled: boolean;
   minePenalty: number;
-  mineReflection: boolean;
   mineReflectionEnabled: boolean;
-  objectionsCount: number;
   objectionsPerTeam: number;
   startingScore: number;
 };
@@ -49,19 +33,15 @@ export type RoomSettings = {
 export type Room = {
   id: string;
   name: string;
-  roomCode: string;
-  activationCode: string;
-  organizerId?: string;
-  organizerUid: string;
-  supervisorCode: string;
-  supervisorCodeExpiresAt: number | string;
+  ownerCode: string;
+  ownerCodeExpiresAt: number | string;
   playerCode: string;
   playerCodeExpiresAt: number | string;
   expiresAt: number | string;
   status: GameStatus;
   settings: RoomSettings;
-  createdAt: number;
-  updatedAt: number;
+  createdAt: number | string;
+  updatedAt?: number | string;
   currentTurnTeamId?: string;
 };
 
@@ -140,7 +120,6 @@ export type GameEvent = {
   id: string;
   roomId: string;
   type:
-    | "activation"
     | "room_created"
     | "player_joined"
     | "team_updated"

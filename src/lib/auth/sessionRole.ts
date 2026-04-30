@@ -3,10 +3,10 @@
 import type { PlayerRole, Room } from "@/types/game";
 import { isCodeExpired } from "./roomAccess";
 
-export type SupervisorSession = {
+export type OwnerSession = {
   role: "organizer";
   roomId: string;
-  supervisorCode: string;
+  ownerCode: string;
   expiresAt: string;
 };
 
@@ -18,7 +18,7 @@ export type PlayerSession = {
   expiresAt: string;
 };
 
-export type RoomSession = SupervisorSession | PlayerSession;
+export type RoomSession = OwnerSession | PlayerSession;
 
 const sessionKey = "alalgham.roomAccess.session";
 
@@ -34,16 +34,16 @@ function toIsoString(value: number | string) {
   return new Date(value).toISOString();
 }
 
-export function saveSupervisorSession(room: Room) {
+export function saveOwnerSession(room: Room) {
   if (!canUseSessionStorage()) {
     return;
   }
 
-  const session: SupervisorSession = {
+  const session: OwnerSession = {
     role: "organizer",
     roomId: room.id,
-    supervisorCode: room.supervisorCode,
-    expiresAt: toIsoString(room.supervisorCodeExpiresAt),
+    ownerCode: room.ownerCode,
+    expiresAt: toIsoString(room.ownerCodeExpiresAt),
   };
 
   window.sessionStorage.setItem(sessionKey, JSON.stringify(session));
@@ -101,12 +101,12 @@ export function clearRoomSession() {
   window.sessionStorage.removeItem(sessionKey);
 }
 
-export function isValidSupervisorSession(room: Room | null | undefined, session = readRoomSession()) {
+export function isValidOwnerSession(room: Room | null | undefined, session = readRoomSession()) {
   return Boolean(
     room &&
       session?.role === "organizer" &&
       session.roomId === room.id &&
-      session.supervisorCode === room.supervisorCode &&
+      session.ownerCode === room.ownerCode &&
       !isCodeExpired(session.expiresAt) &&
       !isCodeExpired(room.expiresAt) &&
       room.status !== "expired",
@@ -119,6 +119,7 @@ export function isValidPlayerSession(room: Room | null | undefined, session = re
       session &&
       session.role !== "organizer" &&
       session.roomId === room.id &&
+      session.playerCode === room.playerCode &&
       !isCodeExpired(session.expiresAt) &&
       !isCodeExpired(room.expiresAt) &&
       room.status !== "expired",

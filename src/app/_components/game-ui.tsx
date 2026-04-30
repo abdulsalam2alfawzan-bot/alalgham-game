@@ -209,10 +209,16 @@ export function BoardGrid({
   );
 }
 
-export function RoomBadge({ code = room.code }: { code?: string }) {
+export function RoomBadge({
+  code = room.playerCode,
+  label = "كود اللاعبين",
+}: {
+  code?: string;
+  label?: string;
+}) {
   return (
     <div className="rounded-3xl bg-slate-950 p-5 text-white shadow-sm">
-      <p className="text-sm font-bold text-teal-200">رمز الغرفة</p>
+      <p className="text-sm font-bold text-teal-200">{label}</p>
       <p className="mt-2 text-5xl font-black tracking-[0.4em]">{code}</p>
     </div>
   );

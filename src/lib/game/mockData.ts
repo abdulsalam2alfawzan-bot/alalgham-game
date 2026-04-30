@@ -1,5 +1,4 @@
 import type {
-  ActivationCode,
   Board,
   BoardSquare,
   Player,
@@ -12,24 +11,13 @@ import {
   categories,
   defaultRoomSettings,
   defaultTeamNames,
-  mockActivationCodes,
   startingScore,
   teamColors,
 } from "./constants";
 
 const now = Date.now();
-const mockSupervisorCode = "M-4821-93";
-const mockPlayerCode = "P-4821-27";
-
-export const sampleActivationCodes: ActivationCode[] = mockActivationCodes.map(
-  (code) => ({
-    code,
-    status: "unused",
-    packageType: "demo",
-    createdAt: now,
-    updatedAt: now,
-  }),
-);
+const twelveHours = 12 * 60 * 60 * 1000;
+const sixHours = 6 * 60 * 60 * 1000;
 
 export const sampleQuestions: Question[] = [
   {
@@ -70,45 +58,67 @@ export const sampleQuestions: Question[] = [
   },
 ];
 
-export const mockRoom: Room = {
-  id: "local-room",
-  name: "غرفة الأصدقاء",
-  roomCode: "4821",
-  activationCode: "DEMO-1234",
-  organizerId: "local-organizer",
-  organizerUid: "local-organizer",
-  supervisorCode: mockSupervisorCode,
-  supervisorCodeExpiresAt: now + 12 * 60 * 60 * 1000,
-  playerCode: mockPlayerCode,
-  playerCodeExpiresAt: now + 6 * 60 * 60 * 1000,
-  expiresAt: now + 12 * 60 * 60 * 1000,
-  status: "waiting",
-  settings: defaultRoomSettings,
-  createdAt: now,
-  updatedAt: now,
-  currentTurnTeamId: "team-1",
-};
+export const mockRooms: Room[] = [
+  {
+    id: "room-4821",
+    name: "غرفة الألغام التجريبية",
+    ownerCode: "M-4821-93",
+    ownerCodeExpiresAt: now + twelveHours,
+    playerCode: "P-4821-27",
+    playerCodeExpiresAt: now + sixHours,
+    expiresAt: now + twelveHours,
+    status: "waiting",
+    settings: defaultRoomSettings,
+    createdAt: now,
+    updatedAt: now,
+    currentTurnTeamId: "room-4821-team-1",
+  },
+  {
+    id: "room-2026",
+    name: "غرفة تحدي العائلة",
+    ownerCode: "M-2026-55",
+    ownerCodeExpiresAt: now + twelveHours,
+    playerCode: "P-2026-88",
+    playerCodeExpiresAt: now + sixHours,
+    expiresAt: now + twelveHours,
+    status: "waiting",
+    settings: { ...defaultRoomSettings, teamsCount: 3, playersPerTeam: 4 },
+    createdAt: now,
+    updatedAt: now,
+    currentTurnTeamId: "room-2026-team-1",
+  },
+];
 
-export const mockTeams: Team[] = defaultTeamNames.map((name, index) => ({
-  id: `team-${index + 1}`,
-  roomId: mockRoom.id,
-  name,
-  color: teamColors[index],
-  score: startingScore,
-  order: index,
-  captainId: index === 0 ? "player-1" : undefined,
-  captainPlayerId: index === 0 ? "player-1" : undefined,
-  doubleAvailable: true,
-  boardLocked: index === 0,
-}));
+export const mockRoom = mockRooms[0];
+
+function createTeamsForMockRoom(room: Room): Team[] {
+  return Array.from({ length: room.settings.teamsCount }, (_, index) => ({
+    id: `${room.id}-team-${index + 1}`,
+    roomId: room.id,
+    name: defaultTeamNames[index] ?? `فريق ${index + 1}`,
+    color: teamColors[index] ?? "bg-slate-600",
+    score: startingScore,
+    order: index,
+    captainId: undefined,
+    captainPlayerId: undefined,
+    doubleAvailable: true,
+    boardLocked: false,
+  }));
+}
+
+export const mockTeams: Team[] = mockRooms.flatMap(createTeamsForMockRoom).map((team) =>
+  team.id === "room-4821-team-1"
+    ? { ...team, captainId: "player-1", captainPlayerId: "player-1", boardLocked: true }
+    : team,
+);
 
 export const mockPlayers: Player[] = [
   {
     id: "player-1",
-    roomId: mockRoom.id,
+    roomId: "room-4821",
     name: "نورة",
     uid: "local-player-1",
-    teamId: "team-1",
+    teamId: "room-4821-team-1",
     role: "captain",
     isCaptain: true,
     joinedAt: now,
@@ -116,10 +126,10 @@ export const mockPlayers: Player[] = [
   },
   {
     id: "player-2",
-    roomId: mockRoom.id,
+    roomId: "room-4821",
     name: "سالم",
     uid: "local-player-2",
-    teamId: "team-1",
+    teamId: "room-4821-team-1",
     role: "player",
     isCaptain: false,
     joinedAt: now,
@@ -127,10 +137,10 @@ export const mockPlayers: Player[] = [
   },
   {
     id: "player-3",
-    roomId: mockRoom.id,
+    roomId: "room-4821",
     name: "مازن",
     uid: "local-player-3",
-    teamId: "team-2",
+    teamId: "room-4821-team-2",
     role: "player",
     isCaptain: false,
     joinedAt: now,
@@ -160,10 +170,10 @@ export function createDefaultBoardSquares(roomId: string, teamId: string): Board
 
 export const mockBoards: Board[] = mockTeams.map((team) => ({
   id: `board-${team.id}`,
-  roomId: mockRoom.id,
+  roomId: team.roomId,
   teamId: team.id,
   locked: team.boardLocked,
-  squares: createDefaultBoardSquares(mockRoom.id, team.id),
+  squares: createDefaultBoardSquares(team.roomId, team.id),
   createdAt: now,
   updatedAt: now,
 }));

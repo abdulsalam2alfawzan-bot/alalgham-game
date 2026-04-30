@@ -1,25 +1,20 @@
 import {
-  isValidActivationCode,
+  isValidOwnerCode,
   isValidPlayerCode,
-  isValidRoomCode,
-  isValidSupervisorCode,
   sanitizeCode,
 } from "@/lib/security/inputSafety";
 
 export type ParsedQrValue = {
   raw: string;
-  activationCode?: string;
-  supervisorCode?: string;
+  ownerCode?: string;
   playerCode?: string;
-  roomCode?: string;
   valid: boolean;
 };
 
 function readAllowedParam(value: string) {
   try {
     const url = new URL(value, "https://alalgham.local");
-    const allowedParams = ["activation", "code", "room"];
-    for (const name of allowedParams) {
+    for (const name of ["code"]) {
       const param = url.searchParams.get(name);
       if (param) {
         return { name, value: sanitizeCode(param) };
@@ -39,20 +34,12 @@ function readAllowedParam(value: string) {
 function classifyCode(rawCode: string): ParsedQrValue {
   const code = sanitizeCode(rawCode);
 
-  if (isValidActivationCode(code) && !code.startsWith("M-") && !code.startsWith("P-")) {
-    return { raw: rawCode, activationCode: code, valid: true };
-  }
-
-  if (isValidSupervisorCode(code)) {
-    return { raw: rawCode, supervisorCode: code, valid: true };
+  if (isValidOwnerCode(code)) {
+    return { raw: rawCode, ownerCode: code, valid: true };
   }
 
   if (isValidPlayerCode(code)) {
     return { raw: rawCode, playerCode: code, valid: true };
-  }
-
-  if (isValidRoomCode(code)) {
-    return { raw: rawCode, roomCode: code, valid: true };
   }
 
   return { raw: rawCode, valid: false };
@@ -64,15 +51,7 @@ export function parseQrValue(value: string): ParsedQrValue {
 
   if (param?.value) {
     const parsed = classifyCode(param.value);
-    if (param.name === "activation" && parsed.activationCode) {
-      return parsed;
-    }
-
-    if (param.name === "room" && parsed.roomCode) {
-      return parsed;
-    }
-
-    if (param.name === "code" && (parsed.activationCode || parsed.supervisorCode || parsed.playerCode)) {
+    if (param.name === "code" && (parsed.ownerCode || parsed.playerCode)) {
       return parsed;
     }
 

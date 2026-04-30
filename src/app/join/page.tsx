@@ -30,6 +30,8 @@ export default function JoinPage() {
       const parsed = parseQrValue(codeFromUrl);
       if (parsed.playerCode) {
         setPlayerCode(parsed.playerCode);
+      } else if (parsed.ownerCode) {
+        setMessage("هذا QR خاص بمالك الغرفة وليس للاعبين");
       }
     }, 0);
 
@@ -42,7 +44,7 @@ export default function JoinPage() {
     const safeName = sanitizeName(playerName);
 
     if (!isValidPlayerCode(safeCode)) {
-      setMessage("كود اللاعب غير صحيح");
+      setMessage("كود اللاعبين غير صحيح أو منتهي");
       return;
     }
 
@@ -66,6 +68,11 @@ export default function JoinPage() {
 
   function handleJoinScan(value: string) {
     const parsed = parseQrValue(value);
+    if (parsed.ownerCode) {
+      setQrMessage("هذا QR خاص بمالك الغرفة وليس للاعبين");
+      return;
+    }
+
     if (!parsed.valid || !parsed.playerCode) {
       setQrMessage("رمز QR غير صالح");
       return;
@@ -73,21 +80,21 @@ export default function JoinPage() {
 
     setPlayerCode(parsed.playerCode);
     setMessage("");
-    setQrMessage("تم قراءة كود اللاعب، اضغط دخول الغرفة للمتابعة.");
+    setQrMessage("تم قراءة كود اللاعبين، اضغط دخول الغرفة للمتابعة.");
   }
 
   return (
     <PageShell
       eyebrow="لاعب"
       title="دخول لاعب"
-      description="اكتب كود اللاعب واسمك، ثم انضم للغرفة."
+      description="أدخل كود اللاعبين للانضمام إلى الغرفة."
     >
       <RoomBadge code={playerCode || "----"} />
 
       <Panel title="بيانات اللاعب">
         <form className="grid gap-4 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200" onSubmit={handleJoin}>
           <label className="grid gap-2">
-            <span className="font-bold text-slate-700">كود اللاعب</span>
+            <span className="font-bold text-slate-700">كود اللاعبين</span>
             <input
               className="min-h-14 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-center text-2xl font-black uppercase tracking-[0.18em] outline-none focus:border-teal-500"
               maxLength={20}
@@ -127,7 +134,7 @@ export default function JoinPage() {
       <Panel title="الدخول عبر QR" tone="soft">
         <div className="grid gap-3">
           <p className="text-sm font-bold leading-6 text-teal-950">
-            يمكنك مسح رمز QR بكاميرا الجوال أو إدخال كود اللاعب يدويًا.
+            يمكنك مسح رمز QR بكاميرا الجوال أو إدخال كود اللاعبين يدويًا.
           </p>
           <button
             type="button"

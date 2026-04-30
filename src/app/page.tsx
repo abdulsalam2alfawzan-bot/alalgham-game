@@ -10,8 +10,8 @@ export default function Home() {
       showOrganizerLink={false}
     >
       <section className="grid gap-3 sm:grid-cols-2">
-        <ActionLink href="/activate" variant="secondary">
-          إنشاء غرفة
+        <ActionLink href="/owner" variant="secondary">
+          دخول مالك الغرفة
         </ActionLink>
         <ActionLink href="/join" variant="light">
           دخول لاعب

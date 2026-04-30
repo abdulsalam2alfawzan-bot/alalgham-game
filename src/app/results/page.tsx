@@ -95,8 +95,8 @@ export default function ResultsPage() {
       </Panel>
 
       <section className="grid gap-3 sm:grid-cols-2">
-        <ActionLink href="/activate" variant="secondary">
-          لعبة جديدة
+        <ActionLink href="/owner" variant="secondary">
+          دخول مالك الغرفة
         </ActionLink>
         <ActionLink href="/" variant="light">
           الرئيسية

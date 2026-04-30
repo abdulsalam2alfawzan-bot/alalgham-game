@@ -1,13 +1,13 @@
 "use client";
 
 import type {
-  ActivationCode,
   Board,
   GameEvent,
   Objection,
   Player,
   Question,
   Room,
+  RoomSettings,
   Team,
   Turn,
 } from "@/types/game";
@@ -15,15 +15,14 @@ import {
   mockBoards,
   mockPlayers,
   mockRoom,
+  mockRooms,
   mockTeams,
-  sampleActivationCodes,
   sampleQuestions,
 } from "./mockData";
 
 export type SessionRole = "player" | "organizer";
 
 export type LocalGameState = {
-  activationCodes: ActivationCode[];
   rooms: Room[];
   teams: Team[];
   players: Player[];
@@ -36,14 +35,23 @@ export type LocalGameState = {
   currentPlayerId?: string;
   currentUserId?: string;
   sessionRole?: SessionRole;
-  currentActivationCode?: string;
+};
+
+type LegacyRoom = Partial<Room> & {
+  teamCount?: number;
+  settings?: Partial<RoomSettings> & {
+    teamCount?: number;
+    mineReflection?: boolean;
+    objectionsCount?: number;
+  };
 };
 
 const localStateKey = "alalgham.mvp.state";
+const twelveHours = 12 * 60 * 60 * 1000;
+const sixHours = 6 * 60 * 60 * 1000;
 
 const initialState: LocalGameState = {
-  activationCodes: sampleActivationCodes,
-  rooms: [mockRoom],
+  rooms: mockRooms,
   teams: mockTeams,
   players: mockPlayers,
   boards: mockBoards,
@@ -54,38 +62,64 @@ const initialState: LocalGameState = {
   currentRoomId: mockRoom.id,
 };
 
-function migrateLocalState(state: LocalGameState): LocalGameState {
-  const now = Date.now();
+function normalizeSettings(settings: LegacyRoom["settings"]): RoomSettings {
   return {
-    ...state,
-    rooms: state.rooms.map((room) => {
-      const seed = room.roomCode || "4821";
-      const settings = {
-        ...room.settings,
-        teamsCount: room.settings.teamsCount ?? room.settings.teamCount,
-        teamCount: room.settings.teamCount ?? room.settings.teamsCount,
-        minePenalty: room.settings.minePenalty ?? 500,
-        mineReflectionEnabled: room.settings.mineReflectionEnabled ?? room.settings.mineReflection,
-        mineReflection: room.settings.mineReflection ?? room.settings.mineReflectionEnabled,
-        objectionsPerTeam: room.settings.objectionsPerTeam ?? room.settings.objectionsCount,
-        objectionsCount: room.settings.objectionsCount ?? room.settings.objectionsPerTeam,
-      };
+    teamsCount: settings?.teamsCount ?? settings?.teamCount ?? 4,
+    playersPerTeam: settings?.playersPerTeam ?? 3,
+    categories: settings?.categories ?? [],
+    answerDurations: settings?.answerDurations ?? {
+      100: 20,
+      300: 30,
+      500: 45,
+      700: 60,
+    },
+    doubleEnabled: settings?.doubleEnabled ?? true,
+    minePenalty: settings?.minePenalty ?? 500,
+    mineReflectionEnabled: settings?.mineReflectionEnabled ?? settings?.mineReflection ?? false,
+    objectionsPerTeam: settings?.objectionsPerTeam ?? settings?.objectionsCount ?? 2,
+    startingScore: settings?.startingScore ?? 1000,
+  };
+}
 
-      return {
-        ...room,
-        settings,
-        supervisorCode: room.supervisorCode ?? `M-${seed}-93`,
-        supervisorCodeExpiresAt: room.supervisorCodeExpiresAt ?? now + 12 * 60 * 60 * 1000,
-        playerCode: room.playerCode ?? `P-${seed}-27`,
-        playerCodeExpiresAt: room.playerCodeExpiresAt ?? now + 6 * 60 * 60 * 1000,
-        expiresAt: room.expiresAt ?? now + 12 * 60 * 60 * 1000,
-      };
-    }),
-    players: state.players.map((player) => ({
+function migrateRoom(room: LegacyRoom, index: number): Room {
+  const now = Date.now();
+  const seed = (room.id ?? (index === 0 ? "4821" : "2026")).replace(/\D/g, "").slice(-4) || "4821";
+  const fallbackRoom = mockRooms[index] ?? mockRoom;
+
+  return {
+    id: room.id ?? fallbackRoom.id,
+    name: room.name ?? fallbackRoom.name,
+    ownerCode: room.ownerCode ?? fallbackRoom.ownerCode ?? `M-${seed}-93`,
+    ownerCodeExpiresAt: room.ownerCodeExpiresAt ?? fallbackRoom.ownerCodeExpiresAt ?? now + twelveHours,
+    playerCode: room.playerCode ?? fallbackRoom.playerCode ?? `P-${seed}-27`,
+    playerCodeExpiresAt: room.playerCodeExpiresAt ?? fallbackRoom.playerCodeExpiresAt ?? now + sixHours,
+    expiresAt: room.expiresAt ?? fallbackRoom.expiresAt ?? now + twelveHours,
+    status: room.status ?? "waiting",
+    settings: normalizeSettings(room.settings),
+    createdAt: room.createdAt ?? now,
+    updatedAt: room.updatedAt ?? now,
+    currentTurnTeamId: room.currentTurnTeamId,
+  };
+}
+
+function migrateLocalState(state: Partial<LocalGameState>): LocalGameState {
+  return {
+    rooms: (state.rooms?.length ? state.rooms : mockRooms).map(migrateRoom),
+    teams: state.teams?.length ? state.teams : mockTeams,
+    players: (state.players?.length ? state.players : mockPlayers).map((player) => ({
       ...player,
       role: player.role ?? (player.isCaptain ? "captain" : "player"),
       status: player.status ?? "active",
     })),
+    boards: state.boards?.length ? state.boards : mockBoards,
+    questions: state.questions?.length ? state.questions : sampleQuestions,
+    turns: state.turns ?? [],
+    events: state.events ?? [],
+    objections: state.objections ?? [],
+    currentRoomId: state.currentRoomId ?? mockRoom.id,
+    currentPlayerId: state.currentPlayerId,
+    currentUserId: state.currentUserId,
+    sessionRole: state.sessionRole,
   };
 }
 
@@ -96,10 +130,6 @@ function canUseStorage() {
 export function createLocalId(prefix: string) {
   const randomPart = Math.random().toString(36).slice(2, 8);
   return `${prefix}-${Date.now().toString(36)}-${randomPart}`;
-}
-
-export function generateRoomCode() {
-  return String(Math.floor(1000 + Math.random() * 9000));
 }
 
 export function readLocalState(): LocalGameState {
@@ -114,7 +144,7 @@ export function readLocalState(): LocalGameState {
   }
 
   try {
-    return migrateLocalState({ ...initialState, ...(JSON.parse(rawState) as LocalGameState) });
+    return migrateLocalState({ ...initialState, ...(JSON.parse(rawState) as Partial<LocalGameState>) });
   } catch {
     window.localStorage.setItem(localStateKey, JSON.stringify(initialState));
     return initialState;
@@ -141,10 +171,6 @@ export function rememberCurrentRoom(roomId: string) {
 
 export function rememberCurrentPlayer(playerId: string) {
   updateLocalState((state) => ({ ...state, currentPlayerId: playerId }));
-}
-
-export function rememberActivation(code: string) {
-  updateLocalState((state) => ({ ...state, currentActivationCode: code }));
 }
 
 export function rememberOrganizerSession(userId: string) {

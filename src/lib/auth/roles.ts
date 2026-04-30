@@ -2,7 +2,7 @@
 
 import type { EffectiveRole, Player, Room, Team } from "@/types/game";
 import {
-  isValidSupervisorSession,
+  isValidOwnerSession,
   readRoomSession,
   type RoomSession,
 } from "./sessionRole";
@@ -29,7 +29,7 @@ export function getEffectiveRole(
       ? teamsOrSession
       : [];
 
-  if (isValidSupervisorSession(room, session)) {
+  if (isValidOwnerSession(room, session)) {
     return "organizer";
   }
 

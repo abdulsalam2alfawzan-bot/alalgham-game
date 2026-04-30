@@ -21,10 +21,10 @@ export type BoardSquare = {
 
 export const room = {
   name: "غرفة الأصدقاء",
-  code: "4821",
-  organizerCode: "9147",
+  playerCode: "P-4821-27",
+  ownerCode: "M-4821-93",
   status: "جاهزة",
-  teamCount: 4,
+  teamsCount: 4,
 };
 
 export const teams: Team[] = [

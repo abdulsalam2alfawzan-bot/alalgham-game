@@ -5,11 +5,11 @@ import { QRCodeSVG } from "qrcode.react";
 import { ActionLink, InfoGrid, PageShell, Panel } from "./game-ui";
 import type { EffectiveRole, GameEvent, Objection, Player, Question, Room, Team, Turn } from "@/types/game";
 import {
+  isOwnerCodeExpired,
   isRoomExpired,
-  isSupervisorCodeExpired,
 } from "@/lib/auth/roomAccess";
 import {
-  isValidSupervisorSession,
+  isValidOwnerSession,
   readRoomSession,
 } from "@/lib/auth/sessionRole";
 import {
@@ -29,6 +29,7 @@ import { getQuestions } from "@/lib/game/questionService";
 import { buildJoinUrl, getRoom, updateRoomStatus } from "@/lib/game/roomService";
 import { adjustTeamScore, getTeams, removeCaptain, saveTeam, setCaptain } from "@/lib/game/teamService";
 import { getCurrentTurn } from "@/lib/game/turnService";
+import { buildOwnerQrUrl } from "@/lib/qr/roomQrLinks";
 import {
   clampNumber,
   sanitizeReason,
@@ -105,7 +106,8 @@ export function SupervisorRoom() {
 
   const session = readRoomSession();
   const effectiveRole: EffectiveRole = getEffectiveRole(undefined, room, session, teams);
-  const sessionValid = isValidSupervisorSession(room, session);
+  const sessionValid = isValidOwnerSession(room, session);
+  const ownerLink = room ? buildOwnerQrUrl(room.ownerCode) : "";
   const joinLink = room ? buildJoinUrl(room.playerCode) : "";
   const activePlayers = players.filter((player) => player.status !== "kicked");
   const currentQuestion = questions[0];
@@ -121,8 +123,8 @@ export function SupervisorRoom() {
       return "انتهت صلاحية الغرفة";
     }
 
-    if (isSupervisorCodeExpired(room)) {
-      return "انتهت صلاحية كود المشرف";
+    if (isOwnerCodeExpired(room)) {
+      return "انتهت صلاحية كود مالك الغرفة";
     }
 
     return "هذه الصفحة مخصصة للمشرف فقط";
@@ -281,8 +283,8 @@ export function SupervisorRoom() {
             <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm font-bold leading-6 text-rose-800 ring-1 ring-rose-100">
               {roomAccessMessage}
             </p>
-            <ActionLink href="/activate" variant="secondary">
-              دخول بكود المشرف
+            <ActionLink href="/owner" variant="secondary">
+              دخول بكود مالك الغرفة
             </ActionLink>
           </div>
         </Panel>
@@ -309,53 +311,82 @@ export function SupervisorRoom() {
             { label: "الغرفة", value: room?.name ?? "..." },
             { label: "الحالة", value: room?.status ?? "..." },
             { label: "انتهاء الغرفة", value: formatTimeRemaining(room?.expiresAt) },
-            { label: "انتهاء كود اللاعب", value: formatTimeRemaining(room?.playerCodeExpiresAt) },
+            { label: "انتهاء كود المالك", value: formatTimeRemaining(room?.ownerCodeExpiresAt) },
+            { label: "انتهاء كود اللاعبين", value: formatTimeRemaining(room?.playerCodeExpiresAt) },
+            { label: "عدد اللاعبين", value: `${activePlayers.length}` },
+            { label: "عدد الفرق", value: `${teams.length}` },
           ]}
         />
       </Panel>
 
-      <Panel title="أكواد الدخول">
+      <Panel title="أكواد و QR الغرفة">
         <div className="grid gap-4 lg:grid-cols-2">
-          <article className="grid gap-3 rounded-3xl border border-amber-200 bg-amber-50 p-4">
+          <article className="grid gap-3 rounded-3xl border-2 border-amber-300 bg-amber-50 p-4">
             <div>
-              <h3 className="text-lg font-black text-amber-950">كود المشرف</h3>
-              <p className="text-sm font-bold text-amber-900">خاص بالمشرف فقط</p>
+              <h3 className="text-lg font-black text-amber-950">مالك الغرفة</h3>
+              <p className="text-sm font-bold text-amber-900">QR مالك الغرفة</p>
             </div>
             <p className="rounded-2xl bg-white px-4 py-4 text-center text-2xl font-black tracking-[0.18em] text-slate-950">
-              {room?.supervisorCode}
+              {room?.ownerCode}
             </p>
-            <p className="rounded-2xl bg-white/70 px-4 py-3 text-sm font-bold text-amber-950">
-              لا ترسل هذا الكود للاعبين
+            {ownerLink ? (
+              <div className="grid justify-items-center gap-2 rounded-3xl bg-white p-3 ring-1 ring-amber-100">
+                <QRCodeSVG value={ownerLink} size={168} marginSize={2} className="rounded-2xl bg-white p-2" />
+                <p className="text-xs font-black text-amber-900">QR مالك الغرفة</p>
+              </div>
+            ) : null}
+            <input readOnly value={ownerLink} className="min-h-12 rounded-2xl border border-amber-200 bg-white px-3 text-sm font-bold text-amber-950 outline-none" />
+            <p className="rounded-2xl bg-white/80 px-4 py-3 text-sm font-bold leading-6 text-amber-950">
+              هذا الكود خاص بالمشرف فقط. لا ترسله للاعبين.
             </p>
-            <button type="button" onClick={() => room && copyText(room.supervisorCode, "كود المشرف")} className="min-h-12 rounded-2xl bg-slate-950 px-4 font-black text-white">
-              نسخ كود المشرف
-            </button>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button type="button" onClick={() => room && copyText(room.ownerCode, "كود مالك الغرفة")} className="min-h-12 rounded-2xl bg-slate-950 px-4 font-black text-white">
+                نسخ كود مالك الغرفة
+              </button>
+              <button type="button" onClick={() => copyText(ownerLink, "رابط مالك الغرفة")} className="min-h-12 rounded-2xl border border-amber-200 bg-white px-4 font-black text-amber-950">
+                نسخ رابط مالك الغرفة
+              </button>
+            </div>
+            <ActionLink href={`/print/owner-card?room=${room?.id ?? ""}`} variant="light" className="text-base">
+              طباعة بطاقة مالك الغرفة
+            </ActionLink>
           </article>
 
-          <article className="grid gap-3 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+          <article className="grid gap-3 rounded-3xl border border-teal-100 bg-white p-4 shadow-sm ring-1 ring-slate-200">
             <div>
-              <h3 className="text-lg font-black text-slate-950">كود اللاعب</h3>
-              <p className="text-sm font-bold text-slate-500">للاعبين فقط</p>
+              <h3 className="text-lg font-black text-slate-950">اللاعبون</h3>
+              <p className="text-sm font-bold text-teal-700">QR اللاعبين</p>
             </div>
             <p className="rounded-2xl bg-slate-50 px-4 py-4 text-center text-2xl font-black tracking-[0.18em] text-slate-950">
               {room?.playerCode}
             </p>
-            <input readOnly value={joinLink} className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-bold text-slate-700 outline-none" />
-            <div className="grid gap-3 sm:grid-cols-2">
-              <button type="button" onClick={() => room && copyText(room.playerCode, "كود اللاعب")} className="min-h-12 rounded-2xl bg-teal-600 px-4 font-black text-white">
-                نسخ كود اللاعب
-              </button>
-              <button type="button" onClick={() => copyText(joinLink, "رابط الدعوة")} className="min-h-12 rounded-2xl border border-slate-200 bg-white px-4 font-black text-slate-700">
-                نسخ رابط الدعوة
-              </button>
-            </div>
             {joinLink ? (
-              <div className="grid justify-items-center gap-2">
-                <QRCodeSVG value={joinLink} size={156} marginSize={2} className="rounded-2xl bg-white p-2 shadow-sm ring-1 ring-slate-200" />
-                <p className="text-xs font-bold text-slate-500">QR دعوة اللاعبين</p>
+              <div className="grid justify-items-center gap-2 rounded-3xl bg-teal-50 p-3 ring-1 ring-teal-100">
+                <QRCodeSVG value={joinLink} size={168} marginSize={2} className="rounded-2xl bg-white p-2" />
+                <p className="text-xs font-black text-teal-800">QR اللاعبين</p>
               </div>
             ) : null}
+            <input readOnly value={joinLink} className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-bold text-slate-700 outline-none" />
+            <p className="rounded-2xl bg-teal-50 px-4 py-3 text-sm font-bold leading-6 text-teal-900">
+              أرسل هذا الكود أو QR للاعبين للانضمام.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button type="button" onClick={() => room && copyText(room.playerCode, "كود اللاعبين")} className="min-h-12 rounded-2xl bg-teal-600 px-4 font-black text-white">
+                نسخ كود اللاعبين
+              </button>
+              <button type="button" onClick={() => copyText(joinLink, "رابط اللاعبين")} className="min-h-12 rounded-2xl border border-slate-200 bg-white px-4 font-black text-slate-700">
+                نسخ رابط اللاعبين
+              </button>
+            </div>
+            <ActionLink href={`/print/player-card?room=${room?.id ?? ""}`} variant="secondary" className="text-base">
+              طباعة بطاقة اللاعبين
+            </ActionLink>
           </article>
+        </div>
+        <div className="mt-4">
+          <ActionLink href={`/print/room-cards?room=${room?.id ?? ""}`} variant="light" className="text-base">
+            طباعة البطاقتين معًا
+          </ActionLink>
         </div>
       </Panel>
 

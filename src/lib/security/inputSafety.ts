@@ -93,11 +93,7 @@ function isValidCode(value: string, maxLength = 20) {
   return Boolean(code) && code.length <= maxLength && /^[A-Z0-9-]+$/.test(code);
 }
 
-export function isValidActivationCode(value: string) {
-  return isValidCode(value) && /^[A-Z0-9]+-[A-Z0-9-]+$/.test(sanitizeCode(value));
-}
-
-export function isValidSupervisorCode(value: string) {
+export function isValidOwnerCode(value: string) {
   return isValidCode(value) && /^M-[A-Z0-9]+-[A-Z0-9]+$/.test(sanitizeCode(value));
 }
 
